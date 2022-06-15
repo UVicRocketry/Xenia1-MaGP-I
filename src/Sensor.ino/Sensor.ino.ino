@@ -1,6 +1,8 @@
 #include <iostream>
 #include "PetitFS.h"
 #include <Wire.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS.h>
 #include <Adafruit_Sensor.h>
 #include "Adafruit_BMP3XX.h"
 #include <SD.h>
@@ -13,11 +15,12 @@
 #define BMP_MOSI 11
 #define BMP_CS 10
 #define SEALEVELPRESSURE_HPA (1013.25)
+#define BAUD_RATE= 115200;
 
 File data;
 int pinCS=29;
 
- /* Purpose: Initialize constructor class
+ /* Purpose: Initialize constructor class and built in methods
      * Parameters:none
      * Returns: none
      * To-do: complete logData
@@ -27,9 +30,13 @@ class Sensor{
     string name;
       
     public: 
-
+    
+     /* Purpose: Begins serial communication between a generic sensor and the microcontroler
+     * Parameters:none
+     * Returns: none
+    */
     void start(){ //initializes serial communication in sensors 
-        Serial.begin(115200);
+        Serial.begin(BAUD_RATE);
         while (!Serial){
             delay(10);
              Serial.println(F(this.name +"sensor was sucessfully initialized"))
@@ -42,40 +49,52 @@ class Sensor{
         }
     }
 
-    void start(string cardName){
-        if (cardName=="sdCard"){
+    /* Purpose: Initializes serial communication and performs specific operations for the given sensors (this 
+     *  can't be initialized generically)
+     * Parameters: string type- the type of sensor to be initialized
+     * Returns: none
+     * To-do:
+    */
+
+    void start(string type){
+        if (type=="sdCard"){
             if (SD.begin()){
                 Serial.println(F("Initialization was succesful"));
-
-            }else{
-                Serial.println(F("Couldn't initialize properly"));
-                return
             }
-        }
-
-        //open and write to the file
-        Serial.println(F("Initialization was succesful"));
-        data=SD.open("data.csv", FILE_WRITE);
-        if (data){
-            //function to print monitor activity goes here*
+            data=SD.open("data.csv", FILE_WRITE);
+            if (data){
             data.close();
             Serial.println(F("done"));
         }   else{
             Serial.println(F("an error ocurred"));
         }
-    }
-    void logData(){
+
+          }else if (type=="gps"){
+           SoftwareSerial ss(4,3);
+           Serial.begin(BAUD_RATE);
+           ss.begin(BAUD_RATE);
+            }
+            else{
+                Serial.println(F("Couldn't initialize properly"));
+                return;
+            }
+        }
+
+     /* Purpose: When calling this method, the data obtained is written to the SD file
+     * Parameters: data- the data to be logged into the card. **ask if it is more convinient to have it as an array.
+     * Returns: none
+     * To-do: complete this method
+    */ 
+
+    void logData(string data){ 
       return;
     }
     
 }
-
-
     void setup(){ 
-      
-    //objects initialization and atributes  
     Sensor bmp390;
-    bmp390.name= bmp; 
+    bmp390.name= bmp;
+
 
     Sensor mpu5069;
     mpu5060.name= mpu;
@@ -93,7 +112,7 @@ class Sensor{
 
     /* Purpose: Fileter unecessary data gathered to optimize quality 
      * Parameters: none
-     * Returns: none
+     * Returns: **maybe return instead of print??
      * To-do:
     */
     void filterBMPdata(){
@@ -105,7 +124,7 @@ class Sensor{
      
     /* Purpose: Get readings for the bmp sensors 
      * Parameters: none
-     * Returns: none
+     * Returns: none **maybe return instead of print??
      * To-do:
     */
     
@@ -129,7 +148,7 @@ class Sensor{
 
      /* Purpose: Get readings for the mpu sensors 
      * Parameters: none
-     * Returns: none
+     * Returns: **maybe return instead of print??
      * To-do:
     */
 
@@ -164,10 +183,26 @@ class Sensor{
     }
     delay(3000);
     }
-            
- 
+     
+     /* Purpose: Gets readings for position in the sensors 
+     * Parameters: type of position wanted
+     * Returns: **maybe return instead of print??
+     * To-do:
+    */
+    void getPos(string positionType){
+      while (ss.available() > 0){
+        gps.encode(ss.read());
 
-    
+      if (gps.location.isUpdated()){
+        if(positionType=="Latitude"){
+        Serial.print(gps.location.lat(), 6);
+        }else{
+        Serial.println(gps.location.lng(), 6);
+        }
+      }   
+   }
+
+   
 
     
       
