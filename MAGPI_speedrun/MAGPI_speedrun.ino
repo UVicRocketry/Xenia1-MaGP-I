@@ -13,6 +13,10 @@
 #include "SPI.h"
 #include "SD.h"
 
+//for motor
+#define ENCODER_OPTIMIZE_INTERRUPTS
+#include "Encoder.h"
+
 //libraries used for GPS
 #include "SoftwareSerial.h"
 #include <TinyGPS++.h>
@@ -36,14 +40,36 @@ static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456;
 
 double filtered_alt;
 
+//for motor
+#define EN 5 //replace pin number
+#define A1_3 3 //L293d channel 1A 3A 
+#define A2_4 4 //
+int motor_position = -999; // to be zero by the the hall effect sensor  
+
 //for algorithm
 bool loop_valid = 1; //incase a reading is not valid
 bool launched = 0;
 bool deployed = 0;
-double yaw_req = 0;
-double last_glide = 0;
+double target_heading = 0.0;
+double last_glide = 0.0;
+const double delta_static = 1.0; ////////////change accordingly///////////
+const double circumference = 1.0; ////////////change accordingly///////////
+const double glide_interval = 1.0; ////////////change accordingly///////////
+double turn_interval;
 
-
+/*
+struct Algorithm
+{
+  bool loop_valid; //incase a reading is not valid
+  bool launched;
+  bool deployed;
+  double target_heading;
+  double last_glide;
+  const double delta_static; ////////////change accordingly///////////
+  const double circumference;
+  double turn_interval;
+};
+*/
 
 
 #define filename "MAGPI.txt"
@@ -61,7 +87,7 @@ Adafruit_MPU6050 mpu;
 File myFile;
 //GPS object
 TinyGPSPlus myGPS;
-SoftwareSerial ss(34, 35); //Serial connection pins
+//SoftwareSerial ss(34, 35); //Serial connection pins
 
 
 
@@ -121,10 +147,12 @@ void set_mpu(){
   mpu.setInterruptPinPolarity(true);
   mpu.setMotionInterrupt(true);
   */
+
+
 }
 
 void set_GPS(){
-  ss.begin(9600);
+  Serial8.begin(9600);
   Serial.print("GPS succesfully initialized");
   
 }
@@ -152,13 +180,9 @@ void detect_Hall(){
   
 }
 
-
-//Code functionality to be ran in the loop() 
-void save_input(){
-//read sensors
-//GPS readings
-  while(ss.available()>0){ // check for gps data
-    myGPS.encode(ss.read());// encode 
+void get_data(){
+  while(Serial8.available()>0){ // check for gps data
+    myGPS.encode(Serial8.read());// encode 
   }
 
   if (myGPS.location.isUpdated()){////////////need check, should perform .isUpdated() for all data?
@@ -173,11 +197,39 @@ void save_input(){
     current_time = micros(); //////////need check//////////// should use gps time + micros
   }
 
-  
-
   //mpu
   sensors_event_t a, w, temp;
   mpu.getEvent(&a, &w, &temp);
+
+  //bmp
+  //////check how to make the code better by class
+  if (!bmp.performReading()) {
+    Serial.println("BMP Failed"); 
+  }
+  myFile.print(bmp.temperature);
+  
+
+  myFile.print("Pressure = ");
+  myFile.print(bmp.pressure / 100.0);
+  myFile.println(" hPa");
+
+  myFile.print("Approx. Altitude = ");
+  myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA));
+  myFile.println(" m");
+
+}
+
+
+//Code functionality to be ran in the loop() 
+void save_data(){
+//read sensors
+//GPS readings
+  
+
+  
+
+  //mpu
+  
 
 
   myFile= SD.open(filename, FILE_WRITE);
@@ -186,8 +238,7 @@ void save_input(){
 
 
   //mpu data sensors readings
-
-
+  
   myFile.print(a.acceleration.x); myFile.print(delim);
   myFile.print(a.acceleration.y); myFile.print(delim);
   myFile.print(a.acceleration.z); myFile.print(delim);
@@ -195,8 +246,14 @@ void save_input(){
   myFile.print(w.gyro.y); myFile.print(delim);
   myFile.print(w.gyro.z); myFile.print(delim);
 
+  //add bmp
+
+
+
+  myFile.close(); 
+
   //bmp sensor input
-  
+  /*
   if (!bmp.performReading()) {
     Serial.println("BMP Failed"); 
   }
@@ -211,22 +268,39 @@ void save_input(){
   myFile.print("Approx. Altitude = ");
   myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA));
   myFile.println(" m");
-
+  */
   //hall effect readings
-
   
-
-  
-
-  myFile.close(); 
 }
 
 void algorithm(){
   int turn_no = 0;
-  bool turn_dir = 0; // 0 == LEFT, 1== RIGHT
-  yaw_req = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
-  turn_dir = (yaw_req < 0)? 0 : 1;
-  // equations and constant, drop test needed + motor 
+  int dir = 0; // -1 == LEFT, 1== RIGHT
+  double yaw_req = 0.0;
+  target_heading = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
+  yaw_req = target_heading - heading;
+  
+  //get principal angle
+  if (yaw_req == 0.0){ 
+    break;
+  }
+  if (yaw_req > 0.0){
+    dir = 1;
+    if (yaw_req > 180.0){
+      yaw_req = -360.0 - yaw_req;
+      dir = -1;
+    }
+  } else {
+      dir = -1;
+      if (yaw_req < -180.0){
+        yaw_req = -360.0 + yaw_req;
+        dir = 1;
+      }
+  }
+  turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(circumference);//gear_ratio);/////update 
+
+  //turn_dir = (target_heading < 0)? 0 : 1;
+  //equations and constant, drop test needed + motor 
 
   //spin
 
@@ -234,9 +308,6 @@ void algorithm(){
 
   //glide
 
-  
-
-  
 }
 
 void setup() {
@@ -246,7 +317,22 @@ void setup() {
   set_bmp();
   set_mpu();
   set_hallEffect();
+  //add one set the motor to high impendace mode to prevent spinning
   
+  /*
+  while(1){
+        check lunch condition (use Jam Jar one);
+        if(launched){ ////////////state///////////////
+            break;
+        }
+    }
+
+    while(launched && !deployed){ /////////////state/////////////
+        get data;
+        store data;
+  */
+ ///////////////change pin/////////////////
+  Encoder motor(39,40); // delcared encoder after deployed to prevent triggering ISR 
 
 }
 
@@ -254,6 +340,8 @@ void loop() {
   //save_input();
   //detect_Hall();
   //find required yaw
-
+  if ((current_time - last_glide)> glide_interval){
+    algorithm();
+  }
   
   }
