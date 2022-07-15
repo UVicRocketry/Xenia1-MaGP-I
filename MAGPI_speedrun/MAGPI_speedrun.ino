@@ -21,6 +21,9 @@
 #include "SoftwareSerial.h"
 #include <TinyGPS++.h>
 
+//states
+bool launched = 0;
+bool deployed = 0;
 
 //variables used for BMP
 #define BMP_SCK 13
@@ -48,8 +51,6 @@ int motor_position = -999; // to be zero by the the hall effect sensor
 
 //for algorithm
 bool loop_valid = 1; //incase a reading is not valid
-bool launched = 0;
-bool deployed = 0;
 double target_heading = 0.0;
 double last_glide = 0.0;
 const double delta_static = 1.0; ////////////change accordingly///////////
@@ -83,6 +84,9 @@ struct Algorithm
 Adafruit_BMP3XX bmp;
 //MPU object 
 Adafruit_MPU6050 mpu;
+sensors_event_t a, w, temp;
+
+
 //File object
 File myFile;
 //GPS object
@@ -198,7 +202,7 @@ void get_data(){
   }
 
   //mpu
-  sensors_event_t a, w, temp;
+  
   mpu.getEvent(&a, &w, &temp);
 
   //bmp
@@ -206,16 +210,12 @@ void get_data(){
   if (!bmp.performReading()) {
     Serial.println("BMP Failed"); 
   }
-  myFile.print(bmp.temperature);
+  myFile.print(bmp.temperature); myFile.print9
   
-
-  myFile.print("Pressure = ");
   myFile.print(bmp.pressure / 100.0);
-  myFile.println(" hPa");
 
-  myFile.print("Approx. Altitude = ");
   myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA));
-  myFile.println(" m");
+
 
 }
 
@@ -281,33 +281,45 @@ void algorithm(){
   yaw_req = target_heading - heading;
   
   //get principal angle
-  if (yaw_req == 0.0){ 
-    break;
-  }
   if (yaw_req > 0.0){
     dir = 1;
     if (yaw_req > 180.0){
       yaw_req = -360.0 - yaw_req;
       dir = -1;
     }
-  } else {
+  } else if (yaw_req < 0.0){
       dir = -1;
       if (yaw_req < -180.0){
         yaw_req = -360.0 + yaw_req;
         dir = 1;
       }
-  }
+  } else {}
+  
   turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(circumference);//gear_ratio);/////update 
 
-  //turn_dir = (target_heading < 0)? 0 : 1;
-  //equations and constant, drop test needed + motor 
-
   //spin
+    //PID controleer + check step
+
 
   //wait for some time
 
   //glide
+  last_glide = 0.0;//time now
 
+}
+
+bool high_G(){
+    Adafruit_MPU6050_Accelerometer::getSensor(sensor_t &a);
+    if ((a.acceleration.x ^2 + a.acceleration.y ^2 + a.acceleration.z ^2 ) >= 25){
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+
+
+bool is_deploy(){
+  // somehting
 }
 
 void setup() {
@@ -318,22 +330,22 @@ void setup() {
   set_mpu();
   set_hallEffect();
   //add one set the motor to high impendace mode to prevent spinning
+  //add set sensor to sleep OR not active
   
-  /*
-  while(1){
-        check lunch condition (use Jam Jar one);
-        if(launched){ ////////////state///////////////
-            break;
-        }
+  while(!launched){
+    int previousTime = millis();
+    while(high_G() && !launched){  ///////////check if this is in Gs
+      launched = ((millis()-previousTime()) > 200)? 1 : 0;
     }
 
-    while(launched && !deployed){ /////////////state/////////////
-        get data;
-        store data;
-  */
- ///////////////change pin/////////////////
+  while(launched && !deployed){ /////////////state/////////////
+    get_data();
+    save_data();
+    //add rasperry pi camera start
+  }
+  ///////////////change pin/////////////////
+  }
   Encoder motor(39,40); // delcared encoder after deployed to prevent triggering ISR 
-
 }
 
 void loop() {
@@ -344,4 +356,4 @@ void loop() {
     algorithm();
   }
   
-  }
+}
