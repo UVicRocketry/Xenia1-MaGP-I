@@ -1,37 +1,75 @@
-//libraries for BMP sensor
-#include "Wire.h"
+/* Info
+#####  Sensors/Input  #####
+Data/Signal -> Sensor <Library> [protocol]
 
-//libraries for BMP
-#include "Adafruit_Sensor.h"
+Numerical Data:
+- GPS -> neo GPS <TinyGPS++> [Serial Port8]
+- Accelration, Gyro -> MPU6050 <Adafruit_sensor.h> [I2C]
+- Alt, Pressure, Temp -> BMP390 <Adafurit> [I2C]
+
+Logic Signal:
+- Gear Motor Position/Step -> Encoder <Encoder.h> [Interrupt/ISR]
+- Pulley RPM -> Hall Effect Sensor [Interrupt/ISR] 
+    Output HIGH when Magnetic Flux increase, therefore the ISR condition is RISING
+
+Interrupts must be handled with caution as it will insert a new command after
+the current command. Interrupts may not be ideal and should be detached/disable 
+during certain operation, writing data to SD card is a good example. 
+
+
+##### Actuator/Output #####
+Gear Motor with L293D to control line deflection
+L293D I/O
+Channel 1_3A I
+Channel 2_4A I
+Channel EN   I
+Channel 1_3Y O
+Channel 2_4Y O
+
+Logic Table:
+A  EN  Y
+H  H   H
+L  H   L
+X  L   Z (High Impedance)
+
+
+##### Top Level Control Flow (without logic) #####
+get data -> calculate -> run control algorithm -> store data 
+*/
+
+/*Develope to do
+- Zeroing of motor position (hall effect and encoder)
+- check ISR implemention (will it affect the operation of the code?)
+- implement logic for state "deployed"
+- refine data storage to SD card
+
+Altitude
+- check if use a complementary filter for altitude 
+- check equation used by the BMP library
+
+*/
+
+#include "Wire.h" //I2C
+#include "Adafruit_Sensor.h" 
 #include "Adafruit_BMP3XX.h"
-
-//libraries for MPU
 #include "Adafruit_MPU6050.h"
-#include "Adafruit_Sensor.h"
 
-//libraries for SD card logging
 #include "SPI.h"
 #include "SD.h"
 
-//for motor
+//for motor encoder
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include "Encoder.h"
 
-//libraries used for GPS
-#include "SoftwareSerial.h"
+//GPS
 #include <TinyGPS++.h>
 
 //states
 bool launched = 0;
 bool deployed = 0;
+bool test_status = 0;
 
-//variables used for BMP
-#define BMP_SCK 13
-#define BMP_MISO 12
-#define BMP_MOSI 11
-#define BMP_CS 10
-
-//variables used for Hall effect sensor
+//variables used for Hall effect sensor /////////////need checking///////////
 volatile byte half_revolutions;
 unsigned int rpm;
 unsigned long timeold;
@@ -48,6 +86,7 @@ double filtered_alt;
 #define A1_3 3 //L293d channel 1A 3A 
 #define A2_4 4 //
 int motor_position = -999; // to be zero by the the hall effect sensor  
+Encoder motor(31, 32); 
 
 //for algorithm
 bool loop_valid = 1; //incase a reading is not valid
@@ -56,10 +95,10 @@ double last_glide = 0.0;
 const double delta_static = 1.0; ////////////change accordingly///////////
 const double circumference = 1.0; ////////////change accordingly///////////
 const double glide_interval = 1.0; ////////////change accordingly///////////
-double turn_interval;
+double turn_interval = 1.0; ////////////change accordingly///////////
 
 /*
-struct Algorithm
+struct Algorithm ///////////should use class OR split into multiple .ino file ///////////////
 {
   bool loop_valid; //incase a reading is not valid
   bool launched;
@@ -72,34 +111,25 @@ struct Algorithm
 };
 */
 
-
 #define filename "MAGPI.txt"
-
-#define SEALEVELPRESSURE_HPA (1013.25)
 #define delim "\t"
- 
 
+#define SEALEVELPRESSURE_HPA (1013.25) ////////////double check the purpose of this definition
 
-//BMP object 
+//BMP
 Adafruit_BMP3XX bmp;
-//MPU object 
+//MPU
 Adafruit_MPU6050 mpu;
 sensors_event_t a, w, temp;
-
-
 //File object
 File myFile;
 //GPS object
 TinyGPSPlus myGPS;
-//SoftwareSerial ss(34, 35); //Serial connection pins
-
 
 
 //Set-up for the sensors to be run in setup() code 
 void set_SD(){
-  Serial.print("checkpoint 1");
   Wire.begin();
-  Serial.print("checkpoint 1");
   Serial.print("Initializing SD card...");
   
   if (!SD.begin(BUILTIN_SDCARD)) {
@@ -111,11 +141,10 @@ void set_SD(){
 }
 
 void set_bmp(){
-  Serial.println("Adafruit BMP390 initialization");
-
   if (!bmp.begin_I2C()) {   // hardware I2C mode, can pass in address & alt Wire
-    Serial.println("Could not find a valid BMP3 sensor, check wiring!");
-    //while (1);
+    Serial.println("BMP not found");
+  } else {
+    Serial.println("BMP OK");
   }
   //filtering unecessary data
   bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
@@ -127,9 +156,9 @@ void set_bmp(){
 void set_mpu(){
   // Initialize
   if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
+    Serial.println("MPU not found");
   } else {
-    Serial.println("MPU6050 was found");
+    Serial.println("MPU OK");
   }
   
   mpu.setAccelerometerRange(MPU6050_RANGE_16_G); //set accleration range to 16G
@@ -152,13 +181,15 @@ void set_mpu(){
   mpu.setMotionInterrupt(true);
   */
 
-
 }
 
 void set_GPS(){
   Serial8.begin(9600);
-  Serial.print("GPS succesfully initialized");
-  
+  if(Serial8){
+    Serial.print("GPS succesfully initialized");
+  } else{
+    Serial.print("Serial8 not open");
+  }
 }
 
 //functions for initialization and magnet detection in Hall Effect sensor
@@ -168,10 +199,10 @@ void set_hallEffect(){
    timeold = 0;
  }
 
- void magnet_detect()//This function is called whenever a magnet/interrupt is detected by the arduino
- {
-   half_revolutions++;
-   Serial.println("detect");
+void magnet_detect()//This function is called whenever a magnet/interrupt is detected by the arduino
+{
+  half_revolutions++;
+  Serial.println("detect");
 }
 
 void detect_Hall(){
@@ -181,10 +212,14 @@ void detect_Hall(){
      half_revolutions = 0;
      //Serial.println(rpm,DEC);
    }
-  
 }
 
 void get_data(){
+  //need to implement logic to see if data is valid:
+  //TinyGPS++ -> isUpdate on class
+  //mpu -> bool getEvent() [Logic need update, should not give a state to the whole loop]
+  //bmp -> bool performReading [Logic need update, should not give a state to the whole loop]
+  
   while(Serial8.available()>0){ // check for gps data
     myGPS.encode(Serial8.read());// encode 
   }
@@ -198,44 +233,20 @@ void get_data(){
     speed = myGPS.speed.mps();
 
   } else{
-    current_time = micros(); //////////need check//////////// should use gps time + micros
+    current_time = micros(); //////////need check//////////// should use gps time + micros OR just treat it as another variable
   }
 
-  //mpu
-  
-  mpu.getEvent(&a, &w, &temp);
-
-  //bmp
-  //////check how to make the code better by class
-  if (!bmp.performReading()) {
-    Serial.println("BMP Failed"); 
-  }
-  myFile.print(bmp.temperature); myFile.print9
-  
-  myFile.print(bmp.pressure / 100.0);
-
-  myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA));
-
-
+  loop_valid = (mpu.getEvent(&a, &w, &temp))? 1 : 0;
+  loop_valid = (bmp.performReading())? 1 : 0;
 }
 
 
 //Code functionality to be ran in the loop() 
 void save_data(){
-//read sensors
-//GPS readings
-  
-
-  
-
-  //mpu
-  
-
-
-  myFile= SD.open(filename, FILE_WRITE);
+  //Use Serial for DEBUG [add pause function]
+  myFile = SD.open(filename, FILE_WRITE);
   myFile.print(millis());
   myFile.print(delim);
-
 
   //mpu data sensors readings
   
@@ -246,30 +257,12 @@ void save_data(){
   myFile.print(w.gyro.y); myFile.print(delim);
   myFile.print(w.gyro.z); myFile.print(delim);
 
-  //add bmp
-
-
+  //bmp
+  myFile.print(bmp.temperature); myFile.print(delim);
+  myFile.print(bmp.pressure); myFile.print(delim);
+  myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA)); myFile.print(delim);
 
   myFile.close(); 
-
-  //bmp sensor input
-  /*
-  if (!bmp.performReading()) {
-    Serial.println("BMP Failed"); 
-  }
-  myFile.print("Temperature = ");
-  myFile.print(bmp.temperature);
-  myFile.println(" *C");
-
-  myFile.print("Pressure = ");
-  myFile.print(bmp.pressure / 100.0);
-  myFile.println(" hPa");
-
-  myFile.print("Approx. Altitude = ");
-  myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA));
-  myFile.println(" m");
-  */
-  //hall effect readings
   
 }
 
@@ -309,22 +302,35 @@ void algorithm(){
 }
 
 bool high_G(){
+    /*
     Adafruit_MPU6050_Accelerometer::getSensor(sensor_t &a);
     if ((a.acceleration.x ^2 + a.acceleration.y ^2 + a.acceleration.z ^2 ) >= 25){
       return 1;
     } else {
       return 0;
     }
+    */
+  return 0;
   }
 
 
 bool is_deploy(){
-  // somehting
+  return 0;
 }
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("Starting set up");
+  while(!Serial);
+  Serial.println("Set up");
+
+  //pin setup for controlling motor
+  pinMode(EN, OUTPUT);
+  pinMode(A1_3, OUTPUT);
+  pinMode(A2_4, OUTPUT);
+  digitalWrite(EN, LOW); //High impendence mode
+  digitalWrite(A1_3, LOW);
+  digitalWrite(A2_4, LOW);
+
   set_SD();
   set_bmp();
   set_mpu();
@@ -335,7 +341,7 @@ void setup() {
   while(!launched){
     int previousTime = millis();
     while(high_G() && !launched){  ///////////check if this is in Gs
-      launched = ((millis()-previousTime()) > 200)? 1 : 0;
+      launched = ((millis()-previousTime) > 200)? 1 : 0;
     }
 
   while(launched && !deployed){ /////////////state/////////////
@@ -345,7 +351,8 @@ void setup() {
   }
   ///////////////change pin/////////////////
   }
-  Encoder motor(39,40); // delcared encoder after deployed to prevent triggering ISR 
+  
+  attachInterrupt(digitalPinToInterrupt(0),detect_Hall, RISING); //for hall effect  /////////change///////// 
 }
 
 void loop() {
