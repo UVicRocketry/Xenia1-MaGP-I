@@ -112,7 +112,7 @@ struct Algorithm ///////////should use class OR split into multiple .ino file //
 */
 
 #define filename "MAGPI.txt"
-#define delim "\t"
+#define delim ","
 
 #define SEALEVELPRESSURE_HPA (1013.25) ////////////double check the purpose of this definition
 
@@ -262,8 +262,21 @@ void save_data(){
   myFile.print(bmp.pressure); myFile.print(delim);
   myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA)); myFile.print(delim);
 
+  myFile.print(lat); myFile.print(delim);
+  myFile.print(lon); myFile.println(""); 
+
   myFile.close(); 
   
+}
+
+void motor_left(){
+  digitalWrite(EN, HIGH);
+  digitalWrite(A1_3, HIGH);
+  digitalWrite(A2_4, LOW);
+}
+
+void motor_right(){
+
 }
 
 void algorithm(){
@@ -291,13 +304,26 @@ void algorithm(){
   turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(circumference);//gear_ratio);/////update 
 
   //spin
-    //PID controleer + check step
+    //Here we should use PID controleer + check step [implement if we have time]
+  while(turn_no != 0){ 
+    //turn motor in the direction needed
+    if(turn_no > 0){  
+      digitalWrite(EN, HIGH);
+      digitalWrite(A1_3, HIGH);
+      digitalWrite(A2_4, LOW);
+    } else if (turn_no < 0){
+      digitalWrite(EN, HIGH);
+      digitalWrite(A1_3, LOW);
+      digitalWrite(A2_4, HIGH);
+    }
+    turn_no -= motor.read(); // check step difference (see Encoder library)
 
-
+  }
+  digitalWrite(EN, LOW); //disable motor when glide
   //wait for some time
 
   //glide
-  last_glide = 0.0;//time now
+  last_glide = 0.0;//time now ////////use unix time or Micros()?
 
 }
 
@@ -312,7 +338,6 @@ bool high_G(){
     */
   return 0;
   }
-
 
 bool is_deploy(){
   return 0;
@@ -335,6 +360,9 @@ void setup() {
   set_bmp();
   set_mpu();
   set_hallEffect();
+  set_GPS();
+  get_data();
+  save_data();
   //add one set the motor to high impendace mode to prevent spinning
   //add set sensor to sleep OR not active
   
