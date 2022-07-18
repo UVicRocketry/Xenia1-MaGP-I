@@ -96,6 +96,12 @@ const double delta_static = 1.0; ////////////change accordingly///////////
 const double circumference = 1.0; ////////////change accordingly///////////
 const double glide_interval = 1.0; ////////////change accordingly///////////
 double turn_interval = 1.0; ////////////change accordingly///////////
+double max_cord = 50; //50mm
+int dir = 0;
+const control_timeout;
+double yaw = 0.0;
+const yaw_control_cutoff;
+int void_timestamp = 0;
 
 /*
 struct Algorithm ///////////should use class OR split into multiple .ino file ///////////////
@@ -281,7 +287,6 @@ void motor_right(){
 
 void algorithm(){
   int turn_no = 0;
-  int dir = 0; // -1 == LEFT, 1== RIGHT
   double yaw_req = 0.0;
   target_heading = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
   yaw_req = target_heading - heading;
@@ -301,10 +306,21 @@ void algorithm(){
       }
   } else {}
   
-  turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(circumference);//gear_ratio);/////update 
 
-  //spin
-    //Here we should use PID controleer + check step [implement if we have time]
+turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(circumference);//gear_ratio);/////update 
+
+void_timestamp = micros();
+yaw = 0.0;
+// get yaw difference -> P controller
+// P controller needs -> current yaw               /////need to set the map of the pulley////////// 
+
+///////////need to add a new variable for the yaw difference???
+while (!((yaw <= yaw_control_cutoff)&&(yaw >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout))
+{
+  // let the code run once first
+ //turn and read the reading from the motor
+
+ turn_no = (yaw_req - yaw)/180.0*(circumference);//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
   while(turn_no != 0){ 
     //turn motor in the direction needed
     if(turn_no > 0){  
@@ -316,9 +332,14 @@ void algorithm(){
       digitalWrite(A1_3, LOW);
       digitalWrite(A2_4, HIGH);
     }
-    turn_no -= motor.read(); // check step difference (see Encoder library)
 
+    //getGyro
+    //intergrate get yaw
+    turn_no -= motor.read(); // to check if motion is completed(check step difference)
   }
+}
+  //spin
+  
   digitalWrite(EN, LOW); //disable motor when glide
   //wait for some time
 
@@ -367,7 +388,7 @@ void setup() {
   //add set sensor to sleep OR not active
   
   while(!launched){
-    int previousTime = millis();
+    void_timestamp = millis();
     while(high_G() && !launched){  ///////////check if this is in Gs
       launched = ((millis()-previousTime) > 200)? 1 : 0;
     }
