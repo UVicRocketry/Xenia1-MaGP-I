@@ -37,15 +37,10 @@ X  L   Z (High Impedance)
 get data -> calculate -> run control algorithm -> store data 
 */
 
-/*Develope to do
-- check all time variables are correct type (some of them are declared as int)
-- implement logic for state "deployed"
-- refine data storage to SD card
-
-Altitude
-- check if use a complementary filter for altitude 
-- check equation used by the BMP library
-
+/*Gordon to do
+- double check if there is any code of the algoritm used Radians -> use degrees
+- check algorthim factor in overshoot angle that is >360 and <-360
+- complete logic then add time_out routines
 
 */
 
@@ -311,20 +306,18 @@ void algorithm(){
   } else {}
   
 
-turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(turn_ratio);//gear_ratio);/////update 
 
-void_timestamp = micros();
-yaw = 0.0;
+
 // get yaw difference -> P controller
 // P controller needs -> current yaw               /////need to set the map of the pulley////////// 
 
-///////////need to add a new variable for the yaw difference???
+yaw = 0.0;
 void_timestamp = micros();
 
 while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout)) {
  
-  last_time = micros();
- turn_no = error*turn_ratio;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
+  last_time = micros(); //t_n-1
+  turn_no = error*turn_ratio;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
   while(turn_no != 0){ 
     //turn motor in the direction needed
     if(turn_no > 0){  
@@ -342,15 +335,24 @@ while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_
     turn_no -= motor.read(); // to check if motion is completed(check step difference)
   }
     get_data();
-    delta_time = micros()- last_time;
-    yaw = w.gyro.z * delta_time; //intergral  ////////change to actual axis + filtering + axis offset calibration 
+    delta_time = micros()- last_time; //t_n - t_n-1
+    yaw += w.gyro.z * delta_time; //intergral ///yaw angle is accumulated  ////////change to actual axis + filtering + axis offset calibration 
+    
+    //get -360 < yaw < 360
+    if (yaw >360.0) {
+      yaw += -360.0;
+    } else {
+      yaw += 360.0;
+    }
     
 
 }
   //spin
   
   digitalWrite(EN, LOW); //disable motor when glide
-  //wait for some time
+  digitalWrite(A1_3, LOW);
+  digitalWrite(A2_4, LOW);
+  //wait for some time ///////////// add//////////////
 
   //glide
   last_glide = 0.0;//time now ////////use unix time or Micros()?
@@ -410,7 +412,6 @@ void setup() {
   ///////////////change pin/////////////////
   }
   
-  attachInterrupt(digitalPinToInterrupt(0),detect_Hall, RISING); //for hall effect  /////////change///////// 
 }
 
 void loop() {

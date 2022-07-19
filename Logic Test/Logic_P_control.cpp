@@ -117,9 +117,17 @@ int main() {
             delta_time = 1.0;
             std::cout<< "delta_time: " << delta_time <<'\n';
             yaw += z * 1.0;
+
+            if (yaw >360.0) {
+            yaw += -360.0;
+            } else {
+            yaw += 360.0;
+            }
+            
             std::cout << "Spined Yaw: " << yaw << '\n';
             //intergral  ////////change to actual axis + filtering + axis offset calibration 
             std::cout << '\n';
+
 
         }
         std::cout << "Exited loop\n\n";
