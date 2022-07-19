@@ -38,14 +38,14 @@ get data -> calculate -> run control algorithm -> store data
 */
 
 /*Develope to do
-- Zeroing of motor position (hall effect and encoder)
-- check ISR implemention (will it affect the operation of the code?)
+- check all time variables are correct type (some of them are declared as int)
 - implement logic for state "deployed"
 - refine data storage to SD card
 
 Altitude
 - check if use a complementary filter for altitude 
 - check equation used by the BMP library
+
 
 */
 
@@ -93,15 +93,19 @@ bool loop_valid = 1; //incase a reading is not valid
 double target_heading = 0.0;
 double last_glide = 0.0;
 const double delta_static = 1.0; ////////////change accordingly///////////
-const double circumference = 1.0; ////////////change accordingly///////////
+const double turn_ratio = 1.0; ////////////change accordingly///////////
 const double glide_interval = 1.0; ////////////change accordingly///////////
 double turn_interval = 1.0; ////////////change accordingly///////////
 double max_cord = 50; //50mm
 int dir = 0;
-const control_timeout;
+const int control_timeout;
 double yaw = 0.0;
-const yaw_control_cutoff;
-int void_timestamp = 0;
+const double yaw_control_cutoff;
+unsigned int void_timestamp = 0;
+double error = 0.0;
+const double k_p = 5.0/180.0; // max length/180 degree 
+unsigned int delta_time = 0;
+unsigned int last_time = 0;
 
 /*
 struct Algorithm ///////////should use class OR split into multiple .ino file ///////////////
@@ -112,7 +116,7 @@ struct Algorithm ///////////should use class OR split into multiple .ino file //
   double target_heading;
   double last_glide;
   const double delta_static; ////////////change accordingly///////////
-  const double circumference;
+  const double turn_ratio;
   double turn_interval;
 };
 */
@@ -289,7 +293,7 @@ void algorithm(){
   int turn_no = 0;
   double yaw_req = 0.0;
   target_heading = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
-  yaw_req = target_heading - heading;
+  yaw_req = (target_heading - heading);
   
   //get principal angle
   if (yaw_req > 0.0){
@@ -307,7 +311,7 @@ void algorithm(){
   } else {}
   
 
-turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(circumference);//gear_ratio);/////update 
+turn_no = (delta_static - (yaw_req/turn_interval /*should be an equation*/)/(1.0 /*should be an equation*/))/(turn_ratio);//gear_ratio);/////update 
 
 void_timestamp = micros();
 yaw = 0.0;
@@ -315,12 +319,12 @@ yaw = 0.0;
 // P controller needs -> current yaw               /////need to set the map of the pulley////////// 
 
 ///////////need to add a new variable for the yaw difference???
-while (!((yaw <= yaw_control_cutoff)&&(yaw >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout))
-{
-  // let the code run once first
- //turn and read the reading from the motor
+void_timestamp = micros();
 
- turn_no = (yaw_req - yaw)/180.0*(circumference);//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
+while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout)) {
+ 
+  last_time = micros();
+ turn_no = error*turn_ratio;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
   while(turn_no != 0){ 
     //turn motor in the direction needed
     if(turn_no > 0){  
@@ -334,9 +338,14 @@ while (!((yaw <= yaw_control_cutoff)&&(yaw >= -yaw_control_cutoff)) && ((micros(
     }
 
     //getGyro
-    //intergrate get yaw
+    
     turn_no -= motor.read(); // to check if motion is completed(check step difference)
   }
+    get_data();
+    delta_time = micros()- last_time;
+    yaw = w.gyro.z * delta_time; //intergral  ////////change to actual axis + filtering + axis offset calibration 
+    
+
 }
   //spin
   
@@ -390,7 +399,7 @@ void setup() {
   while(!launched){
     void_timestamp = millis();
     while(high_G() && !launched){  ///////////check if this is in Gs
-      launched = ((millis()-previousTime) > 200)? 1 : 0;
+      launched = ((millis()- void_timestamp) > 200)? 1 : 0;
     }
 
   while(launched && !deployed){ /////////////state/////////////
