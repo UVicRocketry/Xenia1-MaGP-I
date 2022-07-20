@@ -120,7 +120,7 @@ int main() {
 
             if (yaw >360.0) {
             yaw += -360.0;
-            } else {
+            } else if (yaw < 360.0) {
             yaw += 360.0;
             }
             

@@ -41,6 +41,7 @@ get data -> calculate -> run control algorithm -> store data
 - double check if there is any code of the algoritm used Radians -> use degrees
 - check algorthim factor in overshoot angle that is >360 and <-360
 - complete logic then add time_out routines
+- Algorthim data writing: Encoder, P controller output, every step
 
 */
 
