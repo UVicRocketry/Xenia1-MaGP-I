@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cmath>
 //states
 bool launched = 0;
 bool deployed = 0;
@@ -83,10 +84,21 @@ double get_data(){
     return z;
 }
 
+double principal_angle(double angle){
+    if (angle > 180.0){
+      angle += -360.0;
+    } else if (angle < -180.0){
+      angle += 360.0;
+    } else if (angle == 360.0 || angle == -360.0){
+        angle = 0.0;
+    }
+  return angle;
+}
+
 int main() {
     while (1)
     {
-        std::cout << "yaw_req: ";
+        std::cout << "yaw_req (-180.0,180.0): ";
         std::cin >> yaw_req;
         yaw = 0.0;
         last_time = 0.0;
@@ -118,11 +130,11 @@ int main() {
             std::cout<< "delta_time: " << delta_time <<'\n';
             yaw += z * 1.0;
 
-            if (yaw >360.0) {
-            yaw += -360.0;
-            } else if (yaw < 360.0) {
-            yaw += 360.0;
-            }
+
+            //find yaw := remainder(mod 360)
+            yaw = std::fmod(yaw, 360.0);
+            //get principle angle
+            yaw = principal_angle(yaw);
             
             std::cout << "Spined Yaw: " << yaw << '\n';
             //intergral  ////////change to actual axis + filtering + axis offset calibration 

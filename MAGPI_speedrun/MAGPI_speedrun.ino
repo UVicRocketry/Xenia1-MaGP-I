@@ -53,12 +53,14 @@ get data -> calculate -> run control algorithm -> store data
 #include "SPI.h"
 #include "SD.h"
 
-//for motor encoder
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include "Encoder.h"
 
 //GPS
 #include <TinyGPS++.h>
+
+//Algorthim
+#include <math.h>
 
 //states
 bool launched = 0;
@@ -198,28 +200,6 @@ void set_GPS(){
   }
 }
 
-//functions for initialization and magnet detection in Hall Effect sensor
-void set_hallEffect(){
-   half_revolutions = 0;
-   rpm = 0;
-   timeold = 0;
- }
-
-void magnet_detect()//This function is called whenever a magnet/interrupt is detected by the arduino
-{
-  half_revolutions++;
-  Serial.println("detect");
-}
-
-void detect_Hall(){
-    if (half_revolutions >= 20) { 
-     rpm = 30*1000/(millis() - timeold)*half_revolutions;
-     timeold = millis();
-     half_revolutions = 0;
-     //Serial.println(rpm,DEC);
-   }
-}
-
 void get_data(){
   //need to implement logic to see if data is valid:
   //TinyGPS++ -> isUpdate on class
@@ -275,80 +255,85 @@ void save_data(){
   
 }
 
-void motor_left(){
-  digitalWrite(EN, HIGH);
-  digitalWrite(A1_3, HIGH);
-  digitalWrite(A2_4, LOW);
+double principal_angle(double angle){
+    if (angle > 180.0){
+      angle += -360.0;
+    } else if (angle < -180.0){
+      angle += 360.0;
+    } else if (angle == 360.0 || angle == -360.0){
+        angle = 0.0;
+    }
+  return angle;
 }
 
-void motor_right(){
-
+int motor_rotate(int turns){
+  while(turns != 0){ 
+  //turn motor in the direction needed
+  if(turns > 0){  
+    digitalWrite(EN, HIGH);
+    digitalWrite(A1_3, HIGH);
+    digitalWrite(A2_4, LOW);
+  } else if (turns < 0){
+    digitalWrite(EN, HIGH);
+    digitalWrite(A1_3, LOW);
+    digitalWrite(A2_4, HIGH);
+  }
+  //get gyro??? OR write to file???
+  turns -= motor.read(); /////// check how to make this properly into a function
+  }
+  return turns;
 }
 
 void algorithm(){
   int turn_no = 0;
+  int turn_reset = 0;
   double yaw_req = 0.0;
   target_heading = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
   yaw_req = (target_heading - heading);
+  yaw_req = principal_angle(yaw_req);
   
-  //get principal angle
-  if (yaw_req > 0.0){
-    dir = 1;
-    if (yaw_req > 180.0){
-      yaw_req = -360.0 - yaw_req;
-      dir = -1;
-    }
-  } else if (yaw_req < 0.0){
-      dir = -1;
-      if (yaw_req < -180.0){
-        yaw_req = -360.0 + yaw_req;
-        dir = 1;
-      }
-  } else {}
-  
-
-
-
 // get yaw difference -> P controller
 // P controller needs -> current yaw               /////need to set the map of the pulley////////// 
 
-yaw = 0.0;
-void_timestamp = micros();
+  yaw = 0.0;
+  void_timestamp = micros();
 
-while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout)) {
- 
-  last_time = micros(); //t_n-1
-  turn_no = error*turn_ratio;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
-  while(turn_no != 0){ 
-    //turn motor in the direction needed
-    if(turn_no > 0){  
-      digitalWrite(EN, HIGH);
-      digitalWrite(A1_3, HIGH);
-      digitalWrite(A2_4, LOW);
-    } else if (turn_no < 0){
-      digitalWrite(EN, HIGH);
-      digitalWrite(A1_3, LOW);
-      digitalWrite(A2_4, HIGH);
+  while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout)) {
+  
+    last_time = micros(); //t_n-1
+    turn_no = error*turn_ratio;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
+    turn_reset += -turn_no; // find required reset turn 
+    /*
+    while(turn_no != 0){ 
+      //turn motor in the direction needed
+      if(turn_no > 0){  
+        digitalWrite(EN, HIGH);
+        digitalWrite(A1_3, HIGH);
+        digitalWrite(A2_4, LOW);
+      } else if (turn_no < 0){
+        digitalWrite(EN, HIGH);
+        digitalWrite(A1_3, LOW);
+        digitalWrite(A2_4, HIGH);
+      }
+      //getGyro
+      
+      turn_no -= motor.read(); // to check if motion is completed(check step difference)
     }
+    */
 
-    //getGyro
-    
-    turn_no -= motor.read(); // to check if motion is completed(check step difference)
-  }
+    turn_no = motor_rotate(turn_no); //////////this should be a bit wrong
+
     get_data();
     delta_time = micros()- last_time; //t_n - t_n-1
     yaw += w.gyro.z * delta_time; //intergral ///yaw angle is accumulated  ////////change to actual axis + filtering + axis offset calibration 
     
-    //get -360 < yaw < 360
-    if (yaw >360.0) {
-      yaw += -360.0;
-    } else {
-      yaw += 360.0;
-    }
-    
+    //find yaw := remainder(mod 360)
+    yaw = std::fmod(yaw, 360.0);
+    yaw = principal_angle(yaw);
 
-}
-  //spin
+      
+  }
+  // finish spin
   
   digitalWrite(EN, LOW); //disable motor when glide
   digitalWrite(A1_3, LOW);
@@ -392,8 +377,8 @@ void setup() {
   set_SD();
   set_bmp();
   set_mpu();
-  set_hallEffect();
   set_GPS();
+
   get_data();
   save_data();
   //add one set the motor to high impendace mode to prevent spinning
@@ -405,7 +390,7 @@ void setup() {
       launched = ((millis()- void_timestamp) > 200)? 1 : 0;
     }
 
-  while(launched && !deployed){ /////////////state/////////////
+  while(launched && !deployed){
     get_data();
     save_data();
     //add rasperry pi camera start
@@ -416,11 +401,11 @@ void setup() {
 }
 
 void loop() {
-  //save_input();
-  //detect_Hall();
+  get_data();
   //find required yaw
   if ((current_time - last_glide)> glide_interval){
     algorithm();
   }
+  save_input();
   
 }
