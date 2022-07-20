@@ -91,7 +91,7 @@ bool loop_valid = 1; //incase a reading is not valid
 double target_heading = 0.0;
 double last_glide = 0.0;
 const double delta_static = 1.0; ////////////change accordingly///////////
-const double turn_ratio = 1.0; ////////////change accordingly///////////
+//const double turn_ratio = 1.0; ////////////change accordingly///////////
 const double glide_interval = 1.0; ////////////change accordingly///////////
 double turn_interval = 1.0; ////////////change accordingly///////////
 double max_cord = 50; //50mm
@@ -101,7 +101,7 @@ double yaw = 0.0;
 const double yaw_control_cutoff;
 unsigned int void_timestamp = 0;
 double error = 0.0;
-const double k_p = 5.0/180.0; // max length/180 degree 
+const double k_p = 3.0/180.0; // max length/180 degree 
 unsigned int delta_time = 0;
 unsigned int last_time = 0;
 
@@ -266,11 +266,11 @@ double principal_angle(double angle){
   return angle;
 }
 
-int motor_rotate(int turns){
+void motor_rotate(int turns){
   while(turns != 0){ 
   //turn motor in the direction needed
   if(turns > 0){  
-    digitalWrite(EN, HIGH);
+    digitalWrite(EN, HIGH); ////// check to see if have time to put a PID routine here //////
     digitalWrite(A1_3, HIGH);
     digitalWrite(A2_4, LOW);
   } else if (turns < 0){
@@ -281,7 +281,7 @@ int motor_rotate(int turns){
   //get gyro??? OR write to file???
   turns -= motor.read(); /////// check how to make this properly into a function
   }
-  return turns;
+  //return turns;
 }
 
 void algorithm(){
@@ -296,12 +296,12 @@ void algorithm(){
 // P controller needs -> current yaw               /////need to set the map of the pulley////////// 
 
   yaw = 0.0;
-  void_timestamp = micros();
+  void_timestamp = micros(); ////////change to time////////
 
   while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout)) {
   
     last_time = micros(); //t_n-1
-    turn_no = error*turn_ratio;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
+    turn_no = round(error*k_p);//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
     turn_reset += -turn_no; // find required reset turn 
     /*
     while(turn_no != 0){ 
@@ -321,9 +321,9 @@ void algorithm(){
     }
     */
 
-    turn_no = motor_rotate(turn_no); //////////this should be a bit wrong
+    motor_rotate(turn_no); //////////it is now a single function, check to see how to write the encoder data
 
-    get_data();
+    get_data(); //mainly for gyro
     delta_time = micros()- last_time; //t_n - t_n-1
     yaw += w.gyro.z * delta_time; //intergral ///yaw angle is accumulated  ////////change to actual axis + filtering + axis offset calibration 
     
@@ -333,7 +333,8 @@ void algorithm(){
 
       
   }
-  // finish spin
+  // reset control line length
+  motor_rotate(turn_reset);
   
   digitalWrite(EN, LOW); //disable motor when glide
   digitalWrite(A1_3, LOW);
@@ -346,15 +347,34 @@ void algorithm(){
 }
 
 bool high_G(){
-    /*
+  #ifdef REAL
     Adafruit_MPU6050_Accelerometer::getSensor(sensor_t &a);
     if ((a.acceleration.x ^2 + a.acceleration.y ^2 + a.acceleration.z ^2 ) >= 25){
       return 1;
     } else {
       return 0;
     }
-    */
-  return 0;
+  #endif
+
+  #ifdef DEBUG
+    Serialif(Serial.available() > 0){
+    status = Serial.read() - '0'; 
+    Serial.print("status:");
+    Serial.println(status);
+    }
+
+    if (status >= 1){
+      return 1;
+      
+    } else {
+      status = 0;
+      return 0;
+    }
+  #endif
+  
+  #ifndef DEBUG
+    return 0;
+  #endif
   }
 
 bool is_deploy(){
