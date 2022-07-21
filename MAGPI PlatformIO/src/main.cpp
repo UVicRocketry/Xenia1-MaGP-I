@@ -1,3 +1,4 @@
+#include <Arduino.h>
 /* Info
 #####  Sensors/Input  #####
 Data/Signal -> Sensor <Library> [protocol]
@@ -80,7 +81,7 @@ GPS time, time since_last_GPS
 #include <TinyGPS++.h>
 
 //Algorthim
-#include <math.h>
+#include "cmath"
 
 //states
 bool launched = 0;
@@ -316,11 +317,10 @@ void algorithm(){
 // P controller needs -> current yaw               /////need to set the map of the pulley////////// 
 
   yaw = 0.0;
-  /*elapsedMicros*/  int algorithm_time; //////////change back to elasped micros   //reset algorithm_time to find time passed and for integration
+  elapsedMicros algorithm_time; //////////change back to elasped micros   //reset algorithm_time to find time passed and for integration
 
-  while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && (algorthim_time < control_timeout)) {
+  while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && (algorithm_time < control_timeout)) {
     
-
     last_time = algorithm_time; //t_n-1
     turn_no = round(error*k_p);//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
     turn_reset += -turn_no; // find required reset turn 
@@ -352,8 +352,8 @@ void algorithm(){
 
 bool high_G(){
   #ifdef REAL
-    Adafruit_MPU6050_Accelerometer::getSensor(sensor_t &a);
-    if ((a.acceleration.x ^2 + a.acceleration.y ^2 + a.acceleration.z ^2 ) >= 25){
+    mpu.getAccelerometerSensor()->getEvent(&a); //get only accleraiontion
+    if ((a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 25.0){
       return 1;
     } else {
       return 0;
@@ -425,13 +425,13 @@ void setup() {
   
 }
 
-void loop() {
+void loop(){
   get_data();
 
   if ((current_time - last_glide) > glide_interval && alt_bmp < alt_cutoff){
     algorithm();
   }
 
-  save_input();
+  save_data();
   
 }
