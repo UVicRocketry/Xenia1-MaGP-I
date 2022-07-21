@@ -41,7 +41,7 @@ all data above will be collected
 
 # Algorthim() #
     target_heading
-    yaw_req
+    yaw_req !!!!can cal afterwards
 
     # P control loop() #
         error //yaw_req - yaw
@@ -49,5 +49,5 @@ all data above will be collected
                 turn_no //this will be a number of steps
 
             delta_time
-            yaw //accumulated
+            yaw //accumulated should find different versions
 

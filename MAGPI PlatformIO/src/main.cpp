@@ -1,4 +1,3 @@
-#include <Arduino.h>
 /* Info
 #####  Sensors/Input  #####
 Data/Signal -> Sensor <Library> [protocol]
@@ -10,13 +9,6 @@ Numerical Data:
 
 Logic Signal:
 - Gear Motor Position/Step -> Encoder <Encoder.h> [Interrupt/ISR]
-- Pulley RPM -> Hall Effect Sensor [Interrupt/ISR] 
-    Output HIGH when Magnetic Flux increase, therefore the ISR condition is RISING
-
-Interrupts must be handled with caution as it will insert a new command after
-the current command. Interrupts may not be ideal and should be detached/disable 
-during certain operation, writing data to SD card is a good example. 
-
 
 ##### Actuator/Output #####
 Gear Motor with L293D to control line deflection
@@ -48,16 +40,6 @@ get data -> calculate -> run control algorithm -> store data
 */
 
 /* Time Routine
-///////// use two elaspe time?
-
-bool reset = 0;
-while(Serial8.available()>0){ // check for gps data
-    myGPS.encode(Serial8.read());// encode 
-    if(!reset){
-      elaspsedMicros since_last_GPS; //reset time stamp when first GPS string package is recieved
-      reset = 1;
-    }
-  }
 the data file will look like (subject to change)
 
 GPS time, time since_last_GPS
@@ -65,7 +47,7 @@ GPS time, time since_last_GPS
 10:00:00, 0, data1, data2, .....
 10:00:00, 10, data1, data2, .....
 */
-
+#include <Arduino.h>
 #include "Wire.h" //I2C
 #include "Adafruit_Sensor.h" 
 #include "Adafruit_BMP3XX.h"
@@ -82,6 +64,7 @@ GPS time, time since_last_GPS
 
 //Algorthim
 #include "cmath"
+#include "SimpleKalmanFilter.h"
 
 //states
 bool launched = 0;
@@ -94,9 +77,10 @@ unsigned int rpm;
 unsigned long timeold;
 
 //variables used for GPS
-double lat ,lon, lat_old, lon_old, current_time, speed, gps_alt, heading;
+double lat ,lon, lat_old, lon_old, speed, gps_alt, heading;
 double elasped_time;
 static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456;
+unsigned long current_time, gps_time;
 
 double filtered_alt;
 
@@ -117,7 +101,7 @@ const double glide_interval = 1.0; ////////////change accordingly///////////
 double turn_interval = 1.0; ////////////change accordingly///////////
 double max_cord = 50; //50mm
 int dir = 0;
-const int control_timeout;
+const unsigned int control_timeout;
 double yaw = 0.0;
 const double yaw_control_cutoff;
 unsigned int void_timestamp = 0;
@@ -126,6 +110,9 @@ const double k_p = 3.0/180.0; // max length/180 degree
 unsigned int delta_time = 0;
 unsigned int last_time = 0;
 const float alt_cutoff = 1.0; ////////change
+const double rad_to_degree = 180.0/PI;
+
+SimpleKalmanFilter kalmanFilter(1,1,0.01); ///////////change constants   //SimpleKalmanFilter(e_mea, e_est, q); 
 
 #define filename "MAGPI.txt"
 #define delim ","
@@ -143,8 +130,16 @@ File myFile;
 //GPS object
 TinyGPSPlus myGPS;
 
+//#define REAL
+#define DEBUG_SERIAL_INPUT
 
-#define REAL
+#ifdef DEBUG_SERIAL_INPUT
+void serial_debug(String str){
+  Serial.print(str);
+  while(Serial.available()==0){
+  }
+}
+#endif
 
 //Set-up for the sensors to be run in setup() code 
 void set_SD(){
@@ -155,7 +150,7 @@ void set_SD(){
     Serial.println("initialization failed for the SD CARD!");
 
   } else{
-    Serial.println("SD Card Initializated");
+    Serial.println("SD Card OK");
   }
 }
 
@@ -166,10 +161,10 @@ void set_bmp(){
     Serial.println("BMP OK");
   }
   //filtering unecessary data
-  bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
-  bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
+  bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X); //high res 19 bit/0.0006C
+  bmp.setPressureOversampling(BMP3_OVERSAMPLING_8X); //high res 19 bit/0.33pa
   bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
-  bmp.setOutputDataRate(BMP3_ODR_50_HZ); 
+  bmp.setOutputDataRate(BMP3_ODR_100_HZ); 
 }
 
 void set_mpu(){
@@ -181,7 +176,8 @@ void set_mpu(){
   }
   
   mpu.setAccelerometerRange(MPU6050_RANGE_16_G); //set accleration range to 16G
-  mpu.setGyroRange(MPU6050_RANGE_2000_DEG); //set gyro range to 2000 deg/s
+  mpu.setGyroRange(MPU6050_RANGE_1000_DEG); //set gyro range to 1000 deg/s
+  //set rate
 
   Serial.print("Setting: Accel / Gyro:"); 
   Serial.print(mpu.getAccelerometerRange());
@@ -220,32 +216,50 @@ void get_data(){
   //mpu -> bool getEvent() [Logic need update, should not give a state to the whole loop]
   //bmp -> bool performReading [Logic need update, should not give a state to the whole loop]
   #ifdef REAL
+  
+  bool reset = 0;
+  unsigned long timestamp_GPS_package = 0;
+  
+  elapsedMicros since_last_GPS; //must be declared outside loop for access
   while(Serial8.available()>0){ // check for gps data
+    if(!reset){
+      timestamp_GPS_package = since_last_GPS;//time stamp for first GPS string package is recieved
+      reset = 1;
+    }
     myGPS.encode(Serial8.read());// encode 
   }
 
   if (myGPS.location.isUpdated()){////////////need check, should perform .isUpdated() for all data?
     lat = myGPS.location.lat();
     lon = myGPS.location.lng();
-    current_time = myGPS.time.value(); //UNIX time
+    gps_time = myGPS.time.value(); //Raw HHMMSSCC (u32)
     gps_alt = myGPS.altitude.meters();
     heading = myGPS.course.deg();
     speed = myGPS.speed.mps();
 
   } else{
-    current_time = micros(); //////////need check//////////// should use gps time + micros OR just treat it as another variable
+    current_time = since_last_GPS - timestamp_GPS_package; //////////need check//////////// should use gps time + micros OR just treat it as another variable
   }
-  /*
-  loop_valid = (mpu.getEvent(&a, &w, &temp))? 1 : 0;
-  loop_valid = (bmp.performReading())? 1 : 0;
-  */
+
   mpu.getEvent(&a, &w, &temp);
   bmp.performReading(); //write to public attributes temperature and pressure
   alt_bmp = bmp.readAltitude(SEALEVELPRESSURE_HPA); 
   #endif
 
   #ifdef DEBUG_SERIAL_INPUT
+    serial_debug("lat: ");
+    lat = double(Serial.parseFloat());
+    serial_debug("lon: ");
+    lon = double(Serial.parseFloat());
+    serial_debug("GPS Time (HHMMSSCC): ");
+    current_time = Serial.parseInt(); //UNIX time
+    //gps_alt = myGPS.altitude.meters();
+    serial_debug("heading: ");
+    heading = myGPS.course.deg();
 
+    //w.gyro.x = 0.0;
+
+    //speed = myGPS.speed.mps();
   #endif
 }
 
@@ -253,7 +267,7 @@ void get_data(){
 void save_data(){
   //Use Serial for DEBUG [add pause function]
   myFile = SD.open(filename, FILE_WRITE);
-  myFile.print(millis());
+  myFile.print(current_time);
   myFile.print(delim);
 
   //mpu data sensors readings
@@ -306,6 +320,7 @@ void rotate_motor(int turns){
 }
 
 void algorithm(){
+
   int turn_no = 0;
   int turn_reset = 0;
   double yaw_req = 0.0;
@@ -327,9 +342,10 @@ void algorithm(){
 
     rotate_motor(turn_no); //////////it is now a single function, check to see how to write the encoder data
 
-    get_data(); //mainly for gyro
-    delta_time = micros()- last_time; //t_n - t_n-1
-    yaw += w.gyro.z * delta_time; //intergral ///yaw angle is accumulated  ////////change to actual axis + filtering + axis offset calibration 
+    mpu.getGyroSensor()->getEvent(&w);
+
+    delta_time = algorithm_time - last_time; //t_n - t_n-1
+    yaw += kalmanFilter.updateEstimate(float(w.gyro.z))* rad_to_degree * delta_time; //intergral ///yaw angle is accumulated  ////////change to actual axis + filtering + axis offset calibration 
     
     //find yaw := remainder(mod 360)
     yaw = std::fmod(yaw, 360.0);
@@ -343,7 +359,7 @@ void algorithm(){
   digitalWrite(EN, LOW); //disable motor when glide
   digitalWrite(A1_3, LOW);
   digitalWrite(A2_4, LOW);
-  //wait for some time ///////////// add//////////////
+
 
   //glide
   last_glide = 0.0;//time now ////////use unix time or Micros()?
@@ -361,7 +377,8 @@ bool high_G(){
   #endif
 
   #ifdef DEBUG_SERIAL_INPUT
-    Serialif(Serial.available() > 0){
+    int status = 0;
+    if(Serial.available() > 0){
     status = Serial.read() - '0'; 
     Serial.print("status:");
     Serial.println(status);
@@ -413,25 +430,34 @@ void setup() {
     while(high_G() && !launched){  ///////////check if this is in Gs
       launched = ((millis()- void_timestamp) > 200)? 1 : 0;
     }
-
+  Serial.print("launched");
+  /*
   while(launched && !deployed){
     get_data();
     save_data();
     //add rasperry pi camera start
-    //digitalWrite(pi_pin, HIGH);
+    //digitalWrite(pi_pin, HIGH);  ///////////////change pin/////////////////
   }
-  ///////////////change pin/////////////////
+  */
+
   }
+  
   
 }
 
 void loop(){
+  #ifdef REAL
   get_data();
 
   if ((current_time - last_glide) > glide_interval && alt_bmp < alt_cutoff){
-    algorithm();
+    algorithm(); ///////algorithm should have it's own get_data and sve_data (or just call them)
   }
-
-  save_data();
   
+  save_data();
+  #endif
+
+  #ifdef REAL
+  get_data();
+  save_data();
+  #endif
 }
