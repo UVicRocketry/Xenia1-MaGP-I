@@ -38,10 +38,11 @@ get data -> calculate -> run control algorithm -> store data
 */
 
 /*Gordon to do
-- double check if there is any code of the algoritm used Radians -> use degrees
-- check algorthim factor in overshoot angle that is >360 and <-360
+- Start up: Use serial port???
 - complete logic then add time_out routines
 - Algorthim data writing: Encoder, P controller output, every step
+- check sensor sampling rate
+- set sensor range
 
 */
 
@@ -72,21 +73,21 @@ volatile byte half_revolutions;
 unsigned int rpm;
 unsigned long timeold;
 
-//variables used for gps
+//variables used for GPS
 double lat ,lon, lat_old, lon_old, current_time, speed, gps_alt, heading;
 double elasped_time;
 static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456;
 
 double filtered_alt;
 
-//for motor
+//motor
 #define EN 5 //replace pin number
 #define A1_3 3 //L293d channel 1A 3A 
 #define A2_4 4 //
 int motor_position = -999; // to be zero by the the hall effect sensor  
 Encoder motor(31, 32); 
 
-//for algorithm
+//algorithm
 bool loop_valid = 1; //incase a reading is not valid
 double target_heading = 0.0;
 double last_glide = 0.0;
@@ -104,20 +105,7 @@ double error = 0.0;
 const double k_p = 3.0/180.0; // max length/180 degree 
 unsigned int delta_time = 0;
 unsigned int last_time = 0;
-
-/*
-struct Algorithm ///////////should use class OR split into multiple .ino file ///////////////
-{
-  bool loop_valid; //incase a reading is not valid
-  bool launched;
-  bool deployed;
-  double target_heading;
-  double last_glide;
-  const double delta_static; ////////////change accordingly///////////
-  const double turn_ratio;
-  double turn_interval;
-};
-*/
+const float alt_cutoff = 1.0; ////////change
 
 #define filename "MAGPI.txt"
 #define delim ","
@@ -126,6 +114,7 @@ struct Algorithm ///////////should use class OR split into multiple .ino file //
 
 //BMP
 Adafruit_BMP3XX bmp;
+float alt_bmp = 0.0;
 //MPU
 Adafruit_MPU6050 mpu;
 sensors_event_t a, w, temp;
@@ -134,6 +123,8 @@ File myFile;
 //GPS object
 TinyGPSPlus myGPS;
 
+
+#define REAL
 
 //Set-up for the sensors to be run in setup() code 
 void set_SD(){
@@ -193,11 +184,14 @@ void set_mpu(){
 
 void set_GPS(){
   Serial8.begin(9600);
+
+  #ifdef DEBUG
   if(Serial8){
     Serial.print("GPS succesfully initialized");
   } else{
     Serial.print("Serial8 not open");
   }
+  #endif
 }
 
 void get_data(){
@@ -205,7 +199,7 @@ void get_data(){
   //TinyGPS++ -> isUpdate on class
   //mpu -> bool getEvent() [Logic need update, should not give a state to the whole loop]
   //bmp -> bool performReading [Logic need update, should not give a state to the whole loop]
-  
+  #ifdef REAL
   while(Serial8.available()>0){ // check for gps data
     myGPS.encode(Serial8.read());// encode 
   }
@@ -221,11 +215,19 @@ void get_data(){
   } else{
     current_time = micros(); //////////need check//////////// should use gps time + micros OR just treat it as another variable
   }
-
+  /*
   loop_valid = (mpu.getEvent(&a, &w, &temp))? 1 : 0;
   loop_valid = (bmp.performReading())? 1 : 0;
-}
+  */
+  mpu.getEvent(&a, &w, &temp);
+  bmp.performReading(); //write to public attributes temperature and pressure
+  alt_bmp = bmp.readAltitude(SEALEVELPRESSURE_HPA); 
+  #endif
 
+  #ifdef DEBUG_SERIAL_INPUT
+
+  #endif
+}
 
 //Code functionality to be ran in the loop() 
 void save_data(){
@@ -235,7 +237,6 @@ void save_data(){
   myFile.print(delim);
 
   //mpu data sensors readings
-  
   myFile.print(a.acceleration.x); myFile.print(delim);
   myFile.print(a.acceleration.y); myFile.print(delim);
   myFile.print(a.acceleration.z); myFile.print(delim);
@@ -246,7 +247,7 @@ void save_data(){
   //bmp
   myFile.print(bmp.temperature); myFile.print(delim);
   myFile.print(bmp.pressure); myFile.print(delim);
-  myFile.print(bmp.readAltitude(SEALEVELPRESSURE_HPA)); myFile.print(delim);
+  myFile.print(alt_bmp); myFile.print(delim);
 
   myFile.print(lat); myFile.print(delim);
   myFile.print(lon); myFile.println(""); 
@@ -261,12 +262,12 @@ double principal_angle(double angle){
     } else if (angle < -180.0){
       angle += 360.0;
     } else if (angle == 360.0 || angle == -360.0){
-        angle = 0.0;
+      angle = 0.0;
     }
   return angle;
 }
 
-void motor_rotate(int turns){
+void rotate_motor(int turns){
   while(turns != 0){ 
   //turn motor in the direction needed
   if(turns > 0){  
@@ -278,8 +279,8 @@ void motor_rotate(int turns){
     digitalWrite(A1_3, LOW);
     digitalWrite(A2_4, HIGH);
   }
-  //get gyro??? OR write to file???
-  turns -= motor.read(); /////// check how to make this properly into a function
+  /////////////////// get gyro??? OR write to file???
+  turns -= motor.read(); 
   }
   //return turns;
 }
@@ -299,29 +300,13 @@ void algorithm(){
   void_timestamp = micros(); ////////change to time////////
 
   while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && ((micros()- void_timestamp) < control_timeout)) {
-  
+    
+
     last_time = micros(); //t_n-1
     turn_no = round(error*k_p);//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
     turn_reset += -turn_no; // find required reset turn 
-    /*
-    while(turn_no != 0){ 
-      //turn motor in the direction needed
-      if(turn_no > 0){  
-        digitalWrite(EN, HIGH);
-        digitalWrite(A1_3, HIGH);
-        digitalWrite(A2_4, LOW);
-      } else if (turn_no < 0){
-        digitalWrite(EN, HIGH);
-        digitalWrite(A1_3, LOW);
-        digitalWrite(A2_4, HIGH);
-      }
-      //getGyro
-      
-      turn_no -= motor.read(); // to check if motion is completed(check step difference)
-    }
-    */
 
-    motor_rotate(turn_no); //////////it is now a single function, check to see how to write the encoder data
+    rotate_motor(turn_no); //////////it is now a single function, check to see how to write the encoder data
 
     get_data(); //mainly for gyro
     delta_time = micros()- last_time; //t_n - t_n-1
@@ -334,7 +319,7 @@ void algorithm(){
       
   }
   // reset control line length
-  motor_rotate(turn_reset);
+  rotate_motor(turn_reset);
   
   digitalWrite(EN, LOW); //disable motor when glide
   digitalWrite(A1_3, LOW);
@@ -356,7 +341,7 @@ bool high_G(){
     }
   #endif
 
-  #ifdef DEBUG
+  #ifdef DEBUG_SERIAL_INPUT
     Serialif(Serial.available() > 0){
     status = Serial.read() - '0'; 
     Serial.print("status:");
@@ -372,7 +357,7 @@ bool high_G(){
     }
   #endif
   
-  #ifndef DEBUG
+  #if(!defined DEBUG_SERIAL_INPUT && !defined REAL)
     return 0;
   #endif
   }
@@ -414,6 +399,7 @@ void setup() {
     get_data();
     save_data();
     //add rasperry pi camera start
+    //digitalWrite(pi_pin, HIGH);
   }
   ///////////////change pin/////////////////
   }
@@ -422,10 +408,11 @@ void setup() {
 
 void loop() {
   get_data();
-  //find required yaw
-  if ((current_time - last_glide)> glide_interval){
+
+  if ((current_time - last_glide) > glide_interval && alt_bmp < alt_cutoff){
     algorithm();
   }
+
   save_input();
   
 }
