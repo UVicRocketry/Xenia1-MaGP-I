@@ -465,7 +465,7 @@ bool high_G(){
     }
 
     mpu.getAccelerometerSensor()->getEvent(&a); //get only accleraiontion
-    Serial.(a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z); 
+    Serial.print(a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z); 
     return status > 3.0 ;
   #endif
   
