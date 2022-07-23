@@ -67,19 +67,17 @@ GPS time, time since_last_GPS
 #include "SimpleKalmanFilter.h"
 
 //states
-bool launched = 0;
-bool deployed = 0;
-bool test_status = 0;
+bool launched = false;
+bool deployed = false;
+bool test_status = false;
+float max_alt = 0.0;
+#define PI_PIN 8
 
-//variables used for Hall effect sensor /////////////need checking///////////
-volatile byte half_revolutions;
-unsigned int rpm;
-unsigned long timeold;
 
 //variables used for GPS
 double lat ,lon, lat_old, lon_old, speed, gps_alt, heading;
 double elasped_time;
-static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456; ////////////change GPS Const
+static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456; ////////////change GPS Location
 unsigned long current_time, gps_time;
 
 double filtered_alt;
@@ -87,23 +85,20 @@ double filtered_alt;
 //motor
 #define EN 5 //replace pin number
 #define A1_3 3 //L293d channel 1A 3A 
-#define A2_4 4 //
-int motor_position = -999; // to be zero by the the hall effect sensor  
-Encoder motor(31, 32); 
-
+#define A2_4 4 //L293d channel 2A 4A 
+Encoder motor(31, 32); // Set up Encoder object and declare two interrupt pins used
+ 
 //algorithm
 double target_heading = 0.0;
 double last_glide = 0.0;
 const double glide_interval = 5.0; //5 sec glide time ////////check if I used micros or mills
-/////////double max_cord = 30; //30mm ,note that the orginal length is 4.826cm 
-int dir = 0;
-const double turn_per_length = 5000.0/110.83; //turns/mm
-const unsigned int control_timeout = 2000; // max 2 sec turn control ////////check if I used micros or mills
 double yaw = 0.0;
 const double yaw_control_cutoff = 5.0; //5degree cut off (for the error)
 unsigned int void_timestamp = 0;
-double error = 0.0;
+const double turn_per_length = 5000.0/110.83; //turns/mm
+const unsigned int control_timeout = 2000; // max 2 sec turn control ////////check if I used micros or mills
 const double k_p = 30.0/180.0; // max length/180 degree 
+double error = 0.0;
 unsigned int delta_time = 0;
 unsigned int last_time = 0;
 const float alt_cutoff = 1.0; ////////change
@@ -115,8 +110,7 @@ SimpleKalmanFilter kalmanFilter(1,1,0.01); ///////////change constants   //Simpl
 #define filename "MAGPI.txt"
 #define delim ","
 
-#define SEALEVELPRESSURE_HPA (1013.25) ////////////double check the purpose of this definition
-
+#define SEALEVELPRESSURE_HPA (1013.25)
 //BMP
 Adafruit_BMP3XX bmp;
 float alt_bmp = 0.0;
@@ -133,6 +127,9 @@ TinyGPSPlus myGPS;
 
 #ifdef DEBUG_SERIAL_INPUT
 void serial_debug(String str){
+  while(Serial.available() > 0){
+    Serial.read();
+  }
   Serial.print(str);
   while(Serial.available()==0){
   }
@@ -143,6 +140,11 @@ void serial_debug(String str){
 void set_SD(){
   Wire.begin();
   Serial.print("Initializing SD card...");
+
+  //Write the heading of the txt file
+  myFile = SD.open(filename, FILE_WRITE);
+  myFile.println("time,ax,ay,az,wx,wy,wz,temp,pressure,alt,lat, lon, gps_alt, heading, speed");
+  myFile.close();
   
   if (!SD.begin(BUILTIN_SDCARD)) {
     Serial.println("initialization failed for the SD CARD!");
@@ -199,26 +201,26 @@ void set_mpu(){
 void set_GPS(){
   Serial8.begin(9600);
 
-  #ifdef DEBUG
+  //#ifdef DEBUG
   if(Serial8){
     Serial.print("GPS succesfully initialized");
   } else{
     Serial.print("Serial8 not open");
   }
-  #endif
+  //#endif
 }
 
 void get_data(){
   #ifdef REAL
   
-  bool reset = 0;
+  bool reset = false;
   unsigned long timestamp_GPS_package = 0;
   
   elapsedMicros since_last_GPS; //must be declared outside loop for access
   while(Serial8.available()>0){ // check for gps data
     if(!reset){
       timestamp_GPS_package = since_last_GPS;//time stamp for first GPS string package is recieved
-      reset = 1;
+      reset = true;
     }
     myGPS.encode(Serial8.read());// encode 
   }
@@ -226,7 +228,7 @@ void get_data(){
   if (myGPS.location.isUpdated()){////////////need check, should perform .isUpdated() for all data?
     lat = myGPS.location.lat();
     lon = myGPS.location.lng();
-    gps_time = myGPS.time.value(); //Raw HHMMSSCC (u32)
+    current_time = myGPS.time.value(); //Raw HHMMSSCC (u32)
     gps_alt = myGPS.altitude.meters();
     heading = myGPS.course.deg();
     speed = myGPS.speed.mps();
@@ -252,6 +254,9 @@ void get_data(){
     heading = myGPS.course.deg();
 
     //w.gyro.x = 0.0;
+    mpu.getEvent(&a, &w, &temp);
+    bmp.performReading(); //write to public attributes temperature and pressure
+    alt_bmp = bmp.readAltitude(SEALEVELPRESSURE_HPA); 
 
     //speed = myGPS.speed.mps();
   #endif
@@ -259,27 +264,56 @@ void get_data(){
 
 void save_data(){
   //Use Serial for DEBUG [add pause function]
+  #ifdef REAL
   myFile = SD.open(filename, FILE_WRITE);
-  myFile.print(current_time);
+  myFile.print(current_time,8);
   myFile.print(delim);
 
   //mpu data sensors readings
-  myFile.print(a.acceleration.x); myFile.print(delim);
-  myFile.print(a.acceleration.y); myFile.print(delim);
-  myFile.print(a.acceleration.z); myFile.print(delim);
-  myFile.print(w.gyro.x); myFile.print(delim);
-  myFile.print(w.gyro.y); myFile.print(delim);
-  myFile.print(w.gyro.z); myFile.print(delim);
+  myFile.print(a.acceleration.x,8); myFile.print(delim);
+  myFile.print(a.acceleration.y,8); myFile.print(delim);
+  myFile.print(a.acceleration.z,8); myFile.print(delim);
+  myFile.print(w.gyro.x,8); myFile.print(delim);
+  myFile.print(w.gyro.y,8); myFile.print(delim);
+  myFile.print(w.gyro.z,8); myFile.print(delim);
 
   //bmp
-  myFile.print(bmp.temperature); myFile.print(delim);
-  myFile.print(bmp.pressure); myFile.print(delim);
-  myFile.print(alt_bmp); myFile.print(delim);
+  myFile.print(bmp.temperature,8); myFile.print(delim);
+  myFile.print(bmp.pressure,8); myFile.print(delim);
+  myFile.print(alt_bmp,8); myFile.print(delim);
 
-  myFile.print(lat); myFile.print(delim);
-  myFile.print(lon); myFile.println(""); 
+  myFile.print(lat,8); myFile.print(delim);
+  myFile.print(lon,8); myFile.print(delim);
+  myFile.print(gps_alt,8); myFile.print(delim);
+  myFile.print(heading,8); myFile.print(delim);
+  myFile.print(speed,8); myFile.print(delim);
+  myFile.print("\n"); 
 
   myFile.close(); 
+  #endif
+
+  #ifdef DEBUG_SERIAL_INPUT
+  //Use Serial for DEBUG [add pause function]
+  Serial.print(current_time);
+  Serial.print(delim);
+
+  //mpu data sensors readings
+  Serial.print(a.acceleration.x); Serial.print(delim);
+  Serial.print(a.acceleration.y); Serial.print(delim);
+  Serial.print(a.acceleration.z); Serial.print(delim);
+  Serial.print(w.gyro.x); Serial.print(delim);
+  Serial.print(w.gyro.y); Serial.print(delim);
+  Serial.print(w.gyro.z); Serial.print(delim);
+
+  //bmp
+  Serial.print(bmp.temperature); Serial.print(delim);
+  Serial.print(bmp.pressure); Serial.print(delim);
+  Serial.print(alt_bmp); Serial.print(delim);
+
+  Serial.print(lat); Serial.print(delim);
+  Serial.print(lon); Serial.println(""); 
+ 
+  #endif
   
 }
 
@@ -294,35 +328,83 @@ double principal_angle(double angle){
   return angle;
 }
 
+// In this code we map the position of the motor with control shroud legnth,
+// with zero being delta_c = 0 (see research paper and project documentation).
+// This function is meant for all range of length including negative
 void rotate_motor(double length){
   int pos = round(turn_per_length * length);
+  int error = pos - motor.read();
+  int init_error = error;
+
+  // Turn on motor controller
   digitalWrite(EN, HIGH);
+
+  // P controller routine to turn motor to correct position without
+  // too much overshoot.
   
-  if (pos > 0){
+  // Minimum pwm (power) the motor will be run at (to prevent stalling)
+  const int min_pwm = 200;
+  
+  // Max allowable error in encoder before controller finishes
+  const int max_error = 50;
 
-    digitalWrite(A1_3, HIGH);
-    while(motor.read() < pos);
+  // Timeout in ms before the controller automatically exits
+  // This is to prevent inf loop due to oscillation or similar senarios.
+  long timeout = 3000;
+  long time_started = millis();
 
-  } else if (pos < 0){ // e.g. pos_now = 0, set point < -10 => pos_now > set point then turn left
+  while(abs(error) > max_error){
+    error = pos - motor.read();
     
-    digitalWrite(A2_4, HIGH);
-    while(motor.read() > pos);
+    int pwm = min_pwm + abs((255-min_pwm)*(error/pos));
+    
+    if (pwm >255){
+      pwm = 255;
+      }
 
+#ifdef DEBUG_SERIAL_INPUT
+    if (millis()%100 == 0){
+      Serial.print(error);
+      Serial.print(",");
+      Serial.println(pwm);      
+    }  
+#endif
+    if (error > 0)
+      analogWrite(A1_3, pwm);
+    else  
+      analogWrite(A2_4, pwm);
+
+    if((millis() - time_started) > timeout){
+      break;
+  
+    }
   }
-  digitalWrite(EN, LOW);
+  digitalWrite(EN, LOW); //stop motor spinning
   digitalWrite(A1_3, LOW);
   digitalWrite(A2_4, LOW);
-  
 }
 
-void algorithm(){
+/*algorithm()
+this function is for controlling the spin of magpi by controlling the control cord line
+control flow as written follow:
+  - get current course heading with TinyGPS++ object .courseTO()
+  - calculate the error between current heading and ideal heading
+      get principal angle (between -180 and 180 degree)
+  - P Controller with error = Set point yaw - actual yaw
+  - If actual yaw is in cutoff range, stop controlling
+  - Reset motor position to 0 
 
+*/
+void algorithm(){ 
+  myFile = SD.open(filename, FILE_WRITE);
+  myFile.println("***Control Event***");
   //int turn_no = 0;
   int turn_reset = 0;
   double yaw_req = 0.0;
   target_heading = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
-  yaw_req = (target_heading - heading);
+  yaw_req = target_heading - heading;
   yaw_req = principal_angle(yaw_req);
+  myFile.print(target_heading);
   
 // get yaw difference -> P controller
 // P controller needs -> current yaw               /////need to set the map of the pulley////////// 
@@ -330,21 +412,26 @@ void algorithm(){
   yaw = 0.0;
   elapsedMicros algorithm_time; //////////change back to elasped micros   //reset algorithm_time to find time passed and for integration
 
-  while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && (algorithm_time < control_timeout)) {
-    
+  while (!abs((error = yaw_req - yaw)<= yaw_control_cutoff) && (algorithm_time < control_timeout)) {
     last_time = algorithm_time; //t_n-1
-    cord_length = error*k_p;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
+    cord_length = error*k_p;//P controller = SetPoint - actual yaw
     
     rotate_motor(cord_length); //////////it is now a single function, check to see how to write the encoder data
 
     mpu.getGyroSensor()->getEvent(&w);
 
-    delta_time = algorithm_time - last_time; //t_n - t_n-1
-    yaw += kalmanFilter.updateEstimate(float(w.gyro.x))* rad_to_degree * delta_time; //intergral ///yaw angle is accumulated 
+    delta_time = (algorithm_time - last_time)* 1e-6; //t_n - t_n-1
+    yaw += kalmanFilter.updateEstimate(float(w.gyro.x))* rad_to_degree * delta_time ; //intergral ///yaw angle is accumulated 
     
     yaw = std::fmod(yaw, 360.0); //find yaw := remainder(mod 360)
     yaw = principal_angle(yaw);
 
+    myFile.println("*P control*");
+    myFile.print(error, 8); myFile.print(delim);
+    myFile.print((last_time * 1e-6), 8); myFile.print(delim);
+    myFile.print(delta_time ,8); myFile.print(delim);
+    myFile.print(w.gyro.x ,8); myFile.print(delim);
+    myFile.println(yaw, 8);
       
   }
   // reset control line length
@@ -358,46 +445,36 @@ void algorithm(){
   //glide
   last_glide = 0.0;//time now ////////use unix time or Micros()?
 
+
+  myFile.close();
 }
 
 bool high_G(){
+
   #ifdef REAL
     mpu.getAccelerometerSensor()->getEvent(&a); //get only accleraiontion
-    if ((a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 25.0){
-      return 1;
-    } else {
-      return 0;
-    }
+    return (a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 886.12; //Check if total accelration > 3g ((3*9.81)^2 = 886.12)
   #endif
 
   #ifdef DEBUG_SERIAL_INPUT
     int status = 0;
     if(Serial.available() > 0){
-    status = Serial.read() - '0'; 
+    status = Serial.parseInt(); 
     Serial.print("status:");
     Serial.println(status);
     }
 
-    if (status >= 1){
-      return 1;
-      
-    } else {
-      status = 0;
-      return 0;
-    }
+    mpu.getAccelerometerSensor()->getEvent(&a); //get only accleraiontion
+    Serial.(a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z); 
+    return status > 3.0 ;
   #endif
   
   #if(!defined DEBUG_SERIAL_INPUT && !defined REAL)
-    return 0;
+    return 1;
   #endif
+
   }
 
-bool is_deploy(){
-  
-  
-  
-  return 0;
-}
 
 void setup() {
   Serial.begin(115200);
@@ -423,22 +500,33 @@ void setup() {
   //add one set the motor to high impendace mode to prevent spinning
   //add set sensor to sleep OR not active
   
-  while(!launched){
+  while(!launched){ //while rocket is not launch, stay in the loop
     void_timestamp = millis();
-    while(high_G() && !launched){  ///////////check if this is in Gs
-      launched = ((millis()- void_timestamp) > 200)? 1 : 0;
+    while(high_G() && !launched){  
+      launched = ((millis()- void_timestamp) > 200)? true : false;
     }
+  }
   Serial.print("launched");
-  /*
-  while(launched && !deployed){
+  
+  while(launched && !deployed){ // while rocket is launched but magpi is not deployed
     get_data();
-    save_data();
-    //add rasperry pi camera start
-    //digitalWrite(pi_pin, HIGH);  ///////////////change pin/////////////////
-  }
-  */
+    
+    if(alt_bmp > max_alt){
+      max_alt = alt_bmp;
 
+    } else if((max_alt - alt_bmp) > 100.0){ //if descent from apogee more than 100m, set deployed true
+      deployed = true;
+
+    }
+    save_data();
+    
   }
+
+  digitalWrite(PI_PIN, HIGH);  //output HIGH logic to the PI_PIN
+  #ifdef DEBUG_SERIAL_INPUT
+  get_data();
+  save_data();
+  #endif
   
   
 }
@@ -454,7 +542,7 @@ void loop(){
   save_data();
   #endif
 
-  #ifdef REAL
+  #ifdef DEBUG_SERIAL_INPUT
   get_data();
   save_data();
   #endif

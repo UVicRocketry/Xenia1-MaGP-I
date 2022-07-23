@@ -12,18 +12,57 @@ const double turn_per_length = 5000.0/110.83;
 
 
 
+// Rotate the motor so the absolute extension or retraction of the
+// the shroud line is length
 void rotate_motor(float length){
-  Serial.print("motor.read(): "); Serial.println(motor.read());
-  int turns = round(turn_per_length * length);
-  int error = 0;
-  Serial.println(turns);
+  
+  // pos is the absolute position in terms of the encoder
+  int pos = round(turn_per_length * length);
+  int error = pos - motor.read();
+  int init_error = error;
+
+  Serial.print("motor.read() "); Serial.println(motor.read());
+
+  // Turn on motor controller
   digitalWrite(EN, HIGH);
-  while(abs(error = turns - motor.read()) >= 50){
-    if (error > 0){
-      analogWrite(A1_3, abs(50 + round(255*error/turns)));
-      
-    }  else if (error < 0){ // e.g. pos_now = 0, set point < -10 => pos_now > set point then turn left
-      analogWrite(A2_4, abs(50 + round(255*error/turns)));
+
+  // P controller routine to turn motor to correct position without
+  // too much overshoot.
+  
+  // Minimum pwm (power) the motor will be run at (to prevent stalling)
+  int min_pwm = 204; 
+
+  // Max allowable error in encoder before controller finishes
+  int max_error = 50;
+
+  // Timeout in ms before the controller automatically exits
+  // This is to prevent inf loop due to oscillation or similar senarios.
+  long timeout = 3000;
+  long time_started = millis();
+
+  while(abs(error) > max_error){
+    error = pos - motor.read();
+    
+    
+    int pwm = min_pwm + (255-min_pwm)*abs(error/pos);
+    if (pwm >255){
+      pwm = 255;
+      }
+
+    if (millis()%100 == 0){
+      Serial.print(error);
+      Serial.print(",");
+      Serial.println(pwm);      
+    }  
+
+    if (error > 0)
+      analogWrite(A1_3, pwm);
+    else  
+      analogWrite(A2_4, pwm);
+
+    if((millis() - time_started) > timeout){
+      Serial.println("Controller did not converge.");
+      break;
     }
   }
 }
@@ -48,7 +87,7 @@ void setup(){
 }
 
 void loop(){
-    Serial.print("motor.read(): "); Serial.println(motor.read());
+    Serial.print("motor.read()before turn: : "); Serial.println(motor.read());
     Serial.print("Length (+/-) : " );
     while(Serial.available() == 0){
       
