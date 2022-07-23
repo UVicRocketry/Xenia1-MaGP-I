@@ -32,7 +32,7 @@ get data -> calculate -> run control algorithm -> store data
 
 /*Gordon to do
 - Start up: Use serial port???
-- complete logic then add time_out routines
+- complete logic then add time_out routines [DONE]
 - Algorthim data writing: Encoder, P controller output, every step
 - check sensor sampling rate
 - set sensor range
@@ -79,7 +79,7 @@ unsigned long timeold;
 //variables used for GPS
 double lat ,lon, lat_old, lon_old, speed, gps_alt, heading;
 double elasped_time;
-static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456;
+static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456; ////////////change GPS Const
 unsigned long current_time, gps_time;
 
 double filtered_alt;
@@ -92,25 +92,23 @@ int motor_position = -999; // to be zero by the the hall effect sensor
 Encoder motor(31, 32); 
 
 //algorithm
-bool loop_valid = 1; //incase a reading is not valid
 double target_heading = 0.0;
 double last_glide = 0.0;
-const double delta_static = 1.0; ////////////change accordingly///////////
-//const double turn_ratio = 1.0; ////////////change accordingly///////////
-const double glide_interval = 1.0; ////////////change accordingly///////////
-double turn_interval = 1.0; ////////////change accordingly///////////
-double max_cord = 50; //50mm
+const double glide_interval = 5.0; //5 sec glide time ////////check if I used micros or mills
+/////////double max_cord = 30; //30mm ,note that the orginal length is 4.826cm 
 int dir = 0;
-const unsigned int control_timeout;
+const double turn_per_length = 5000.0/110.83; //turns/mm
+const unsigned int control_timeout = 2000; // max 2 sec turn control ////////check if I used micros or mills
 double yaw = 0.0;
-const double yaw_control_cutoff;
+const double yaw_control_cutoff = 5.0; //5degree cut off (for the error)
 unsigned int void_timestamp = 0;
 double error = 0.0;
-const double k_p = 3.0/180.0; // max length/180 degree 
+const double k_p = 30.0/180.0; // max length/180 degree 
 unsigned int delta_time = 0;
 unsigned int last_time = 0;
 const float alt_cutoff = 1.0; ////////change
 const double rad_to_degree = 180.0/PI;
+double cord_length = 0.0;
 
 SimpleKalmanFilter kalmanFilter(1,1,0.01); ///////////change constants   //SimpleKalmanFilter(e_mea, e_est, q); 
 
@@ -211,10 +209,6 @@ void set_GPS(){
 }
 
 void get_data(){
-  //need to implement logic to see if data is valid:
-  //TinyGPS++ -> isUpdate on class
-  //mpu -> bool getEvent() [Logic need update, should not give a state to the whole loop]
-  //bmp -> bool performReading [Logic need update, should not give a state to the whole loop]
   #ifdef REAL
   
   bool reset = 0;
@@ -263,7 +257,6 @@ void get_data(){
   #endif
 }
 
-//Code functionality to be ran in the loop() 
 void save_data(){
   //Use Serial for DEBUG [add pause function]
   myFile = SD.open(filename, FILE_WRITE);
@@ -301,27 +294,30 @@ double principal_angle(double angle){
   return angle;
 }
 
-void rotate_motor(int turns){
-  while(turns != 0){ 
-  //turn motor in the direction needed
-  if(turns > 0){  
-    digitalWrite(EN, HIGH); ////// check to see if have time to put a PID routine here //////
+void rotate_motor(double length){
+  int pos = round(turn_per_length * length);
+  digitalWrite(EN, HIGH);
+  
+  if (pos > 0){
+
     digitalWrite(A1_3, HIGH);
-    digitalWrite(A2_4, LOW);
-  } else if (turns < 0){
-    digitalWrite(EN, HIGH);
-    digitalWrite(A1_3, LOW);
+    while(motor.read() < pos);
+
+  } else if (pos < 0){ // e.g. pos_now = 0, set point < -10 => pos_now > set point then turn left
+    
     digitalWrite(A2_4, HIGH);
+    while(motor.read() > pos);
+
   }
-  /////////////////// get gyro??? OR write to file???
-  turns -= motor.read(); 
-  }
-  //return turns;
+  digitalWrite(EN, LOW);
+  digitalWrite(A1_3, LOW);
+  digitalWrite(A2_4, LOW);
+  
 }
 
 void algorithm(){
 
-  int turn_no = 0;
+  //int turn_no = 0;
   int turn_reset = 0;
   double yaw_req = 0.0;
   target_heading = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
@@ -337,24 +333,22 @@ void algorithm(){
   while (!(((error = yaw_req - yaw)<= yaw_control_cutoff)&&(error >= -yaw_control_cutoff)) && (algorithm_time < control_timeout)) {
     
     last_time = algorithm_time; //t_n-1
-    turn_no = round(error*k_p);//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
-    turn_reset += -turn_no; // find required reset turn 
-
-    rotate_motor(turn_no); //////////it is now a single function, check to see how to write the encoder data
+    cord_length = error*k_p;//P controller = SetPoint - actual yaw      /////////need to check the ratio of turns to actuated distance
+    
+    rotate_motor(cord_length); //////////it is now a single function, check to see how to write the encoder data
 
     mpu.getGyroSensor()->getEvent(&w);
 
     delta_time = algorithm_time - last_time; //t_n - t_n-1
-    yaw += kalmanFilter.updateEstimate(float(w.gyro.z))* rad_to_degree * delta_time; //intergral ///yaw angle is accumulated  ////////change to actual axis + filtering + axis offset calibration 
+    yaw += kalmanFilter.updateEstimate(float(w.gyro.x))* rad_to_degree * delta_time; //intergral ///yaw angle is accumulated 
     
-    //find yaw := remainder(mod 360)
-    yaw = std::fmod(yaw, 360.0);
+    yaw = std::fmod(yaw, 360.0); //find yaw := remainder(mod 360)
     yaw = principal_angle(yaw);
 
       
   }
   // reset control line length
-  rotate_motor(turn_reset);
+  rotate_motor(0); //rest motor position to 0
   
   digitalWrite(EN, LOW); //disable motor when glide
   digitalWrite(A1_3, LOW);
@@ -399,6 +393,9 @@ bool high_G(){
   }
 
 bool is_deploy(){
+  
+  
+  
   return 0;
 }
 
@@ -415,6 +412,7 @@ void setup() {
   digitalWrite(A1_3, LOW);
   digitalWrite(A2_4, LOW);
 
+  motor.write(0);
   set_SD();
   set_bmp();
   set_mpu();

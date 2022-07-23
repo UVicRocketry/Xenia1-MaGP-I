@@ -8,26 +8,30 @@
 int motor_position = -999; // to be zero by the the hall effect sensor  
 Encoder motor(31, 32); 
 
-void rotate_motor(int turns){
-  while(turns != 0){ 
-  //turn motor in the direction needed
-  if(turns > 0){  
-    digitalWrite(EN, HIGH); ////// check to see if have time to put a PID routine here //////
-    digitalWrite(A1_3, HIGH);
-    digitalWrite(A2_4, LOW);
-  } else if (turns < 0){
-    digitalWrite(EN, HIGH);
-    digitalWrite(A1_3, LOW);
-    digitalWrite(A2_4, HIGH);
+const double turn_per_length = 5000.0/110.83;
+
+
+
+void rotate_motor(float length){
+  Serial.print("motor.read(): "); Serial.println(motor.read());
+  int turns = round(turn_per_length * length);
+  int error = 0;
+  Serial.println(turns);
+  digitalWrite(EN, HIGH);
+  while(abs(error = turns - motor.read()) >= 50){
+    if (error > 0){
+      analogWrite(A1_3, abs(50 + round(255*error/turns)));
+      
+    }  else if (error < 0){ // e.g. pos_now = 0, set point < -10 => pos_now > set point then turn left
+      analogWrite(A2_4, abs(50 + round(255*error/turns)));
+    }
   }
-  /////////////////// get gyro??? OR write to file???
-  turns -= motor.read(); 
-  }
-  //return turns;
 }
+
 
 void setup(){
 //pin setup for controlling motor
+    motor.write(0);
     pinMode(EN, OUTPUT);
     pinMode(A1_3, OUTPUT);
     pinMode(A2_4, OUTPUT);
@@ -38,16 +42,34 @@ void setup(){
     Serial.begin(9600);
     while(!Serial);
     
+    
+    
+
 }
 
 void loop(){
-    Serial.print("Enter step [Left(-)/Right(+)]: ");
-    while(Serial.available() == 0);
-    rotate_motor(Serial.read());
+    Serial.print("motor.read(): "); Serial.println(motor.read());
+    Serial.print("Length (+/-) : " );
+    while(Serial.available() == 0){
+      
+    }
     
-    digitalWrite(EN, LOW); 
+    Serial.println("Turning...");
+    rotate_motor(Serial.parseFloat());
+    
+    digitalWrite(EN, LOW); //High impendence mode
     digitalWrite(A1_3, LOW);
-    digitalWrite(A2_4, LOW);
-        
+    digitalWrite(A2_4, LOW); 
+    
+    while(Serial.available() > 0){
+      Serial.read();
+      }
+     
+
+
+    Serial.print("Done. Num of turns:");
+    Serial.println(motor.read());
+
+
 
 }
