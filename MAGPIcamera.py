@@ -1,4 +1,3 @@
-     
  #This is the draft for the camera stream 
 
 import io
@@ -7,29 +6,54 @@ import picamera
 import string
 import serial 
 import time
+import cv2
+
+
+import RPi.GPIO as GPIO
+
 
 from time import sleep
 from picamera import PiCamera
 from smbus import SMBus #to work with 12C communication
 
 
-pi_camera1 = VideoStream(usePiCamera=True).start()
-pi_camera2 = VideoStream(usePiCamera=True).start()
 
-    
-if(GPIO_pin==high):
-        camera1= picamera.PiCamera()
-        camera2= picamera.PiCamera()
+
+#start pi camera
+def start_picam():
         
-        stream1 = camera1.PiCameraCircularIO(camera)
-        stream2 = camera2.PiCameraCircularIO(camera)
-        camera1.start_recording(stream, format='h264')
+        pi_camera = VideoStream(usePiCamera=True).start() #Pi Camera
+        
+        pi_camera.start_preview()  #to see on laptop
+        pi_camera.capture("testPiCam.jpg") #to be commented out
+        #camera.vflip=True #in case it is upside down
+        time.sleep(5) #before starting recording
+        
+        pi_camera.start_recording('/home/pi/Desktop/pi_cam_video.h264')   
+        
+def start_usbcam():
+        usb_camera = VideoStream(src=0).start() #USB camera 
+        
+        usb_camera.start_preview()  #to see on laptop
+        usb_camera.capture("testUSBCam.jpg")         
+        
+        usb_camera.start_recording('/home/pi/Desktop/usb_cam_video.h264')
+        
+        
+       
+    
+if (GPIO.input==GPIO.HIGH): #GPIO pin set to trigger camera once received high voltage 
+        
+        
         try:
                 while True:
-                        camera.wait_recording(1)
-                        camera.wait_recording(10)
-                        stream.copy_to('motion.h264')
+                        start_picam()
+                        start_usbcam()
         finally:
-                camera.stop_recording()            
+                camera1.stop_recording()       
+                camera2.stop_recording()            
+                
+ 
+ 
  
 
