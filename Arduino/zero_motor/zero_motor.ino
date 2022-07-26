@@ -5,10 +5,10 @@
 #define EN 5 //replace pin number
 #define A1_3 3 //L293d channel 1A 3A 
 #define A2_4 4 //
-int motor_position = -999; // to be zero by the the hall effect sensor  
+//int motor_position = -999; // to be zero by the the hall effect sensor  
 Encoder motor(31, 32); 
 
-const double turn_per_length = 5000.0/110.83;
+const double turn_per_length = 4951/80.55;
 
 
 
@@ -18,10 +18,11 @@ void rotate_motor(float length){
   
   // pos is the absolute position in terms of the encoder
   int pos = round(turn_per_length * length);
+  //int pos = length;
   int error = pos - motor.read();
   int init_error = error;
 
-  Serial.print("motor.read() "); Serial.println(motor.read());
+  Serial.print("motor.read() Before "); Serial.println(motor.read());
 
   // Turn on motor controller
   digitalWrite(EN, HIGH);
@@ -30,10 +31,10 @@ void rotate_motor(float length){
   // too much overshoot.
   
   // Minimum pwm (power) the motor will be run at (to prevent stalling)
-  int min_pwm = 204; 
+  int min_pwm = 180; 
 
   // Max allowable error in encoder before controller finishes
-  int max_error = 50;
+  int max_error = 200;
 
   // Timeout in ms before the controller automatically exits
   // This is to prevent inf loop due to oscillation or similar senarios.
@@ -44,7 +45,7 @@ void rotate_motor(float length){
     error = pos - motor.read();
     
     
-    int pwm = min_pwm + (255-min_pwm)*abs(error/pos);
+    int pwm = min_pwm + (255-min_pwm)*abs(error/init_error);
     if (pwm >255){
       pwm = 255;
       }
@@ -65,6 +66,9 @@ void rotate_motor(float length){
       break;
     }
   }
+    digitalWrite(EN, LOW); //High impendence mode
+    analogWrite(A1_3, 0);
+    analogWrite(A2_4, 0); 
 }
 
 
@@ -75,8 +79,8 @@ void setup(){
     pinMode(A1_3, OUTPUT);
     pinMode(A2_4, OUTPUT);
     digitalWrite(EN, LOW); //High impendence mode
-    digitalWrite(A1_3, LOW);
-    digitalWrite(A2_4, LOW);
+    analogWrite(A1_3, 0);
+    analogWrite(A2_4, 0); 
 
     Serial.begin(9600);
     while(!Serial);
@@ -87,7 +91,6 @@ void setup(){
 }
 
 void loop(){
-    Serial.print("motor.read()before turn: : "); Serial.println(motor.read());
     Serial.print("Length (+/-) : " );
     while(Serial.available() == 0){
       
@@ -97,8 +100,8 @@ void loop(){
     rotate_motor(Serial.parseFloat());
     
     digitalWrite(EN, LOW); //High impendence mode
-    digitalWrite(A1_3, LOW);
-    digitalWrite(A2_4, LOW); 
+    analogWrite(A1_3, 0);
+    analogWrite(A2_4, 0); 
     
     while(Serial.available() > 0){
       Serial.read();
@@ -106,7 +109,7 @@ void loop(){
      
 
 
-    Serial.print("Done. Num of turns:");
+    Serial.print("motor.read() after:");
     Serial.println(motor.read());
 
 

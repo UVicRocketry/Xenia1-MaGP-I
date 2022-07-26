@@ -95,15 +95,16 @@ const double glide_interval = 5.0; //5 sec glide time ////////check if I used mi
 double yaw = 0.0;
 const double yaw_control_cutoff = 5.0; //5degree cut off (for the error)
 unsigned int void_timestamp = 0;
-const double turn_per_length = 5000.0/110.83; //turns/mm
+const double turn_per_length = 4951.0/80.55; //turns/mm
 const unsigned int control_timeout = 2000; // max 2 sec turn control ////////check if I used micros or mills
-const double k_p = 30.0/180.0; // max length/180 degree 
+const double k_p = 50.0/180.0; // max length/180 degree 
 double error = 0.0;
 unsigned int delta_time = 0;
 unsigned int last_time = 0;
 const float alt_cutoff = 1.0; ////////change
 const double rad_to_degree = 180.0/PI;
 double cord_length = 0.0;
+#define max_cord_lenth 50.0
 
 SimpleKalmanFilter kalmanFilter(1,1,0.01); ///////////change constants   //SimpleKalmanFilter(e_mea, e_est, q); 
 
@@ -122,8 +123,9 @@ File myFile;
 //GPS object
 TinyGPSPlus myGPS;
 
-//#define REAL
-#define DEBUG_SERIAL_INPUT
+#define REAL
+#define ASSY_REHERSAL
+//#define DEBUG_SERIAL_INPUT
 
 #ifdef DEBUG_SERIAL_INPUT
 void serial_debug(String str){
@@ -328,13 +330,19 @@ double principal_angle(double angle){
   return angle;
 }
 
-// In this code we map the position of the motor with control shroud legnth,
-// with zero being delta_c = 0 (see research paper and project documentation).
-// This function is meant for all range of length including negative
-void rotate_motor(double length){
+// Rotate the motor so the absolute extension or retraction of the
+// the shroud line is length
+void rotate_motor(float length){
+  if(length > max_cord_lenth){
+    length = max_cord_lenth;
+  }
+  // pos is the absolute position in terms of the encoder
   int pos = round(turn_per_length * length);
+  //int pos = length;
   int error = pos - motor.read();
   int init_error = error;
+
+  Serial.print("E_i"); Serial.println(motor.read());
 
   // Turn on motor controller
   digitalWrite(EN, HIGH);
@@ -343,10 +351,10 @@ void rotate_motor(double length){
   // too much overshoot.
   
   // Minimum pwm (power) the motor will be run at (to prevent stalling)
-  const int min_pwm = 200;
-  
+  int min_pwm = 180; 
+
   // Max allowable error in encoder before controller finishes
-  const int max_error = 50;
+  int max_error = 200;
 
   // Timeout in ms before the controller automatically exits
   // This is to prevent inf loop due to oscillation or similar senarios.
@@ -356,32 +364,30 @@ void rotate_motor(double length){
   while(abs(error) > max_error){
     error = pos - motor.read();
     
-    int pwm = min_pwm + abs((255-min_pwm)*(error/pos));
-    
+    int pwm = min_pwm + (255-min_pwm)*abs(error/init_error);
     if (pwm >255){
       pwm = 255;
       }
 
-#ifdef DEBUG_SERIAL_INPUT
-    if (millis()%100 == 0){
-      Serial.print(error);
-      Serial.print(",");
-      Serial.println(pwm);      
+    if (millis()%200 == 0){
+      myFile.print(error);
+      myFile.print(",");      
     }  
-#endif
+
     if (error > 0)
       analogWrite(A1_3, pwm);
     else  
       analogWrite(A2_4, pwm);
 
     if((millis() - time_started) > timeout){
+      myFile.print("timeout");
       break;
-  
     }
   }
-  digitalWrite(EN, LOW); //stop motor spinning
-  digitalWrite(A1_3, LOW);
-  digitalWrite(A2_4, LOW);
+    digitalWrite(EN, LOW); //High impendence mode
+    analogWrite(A1_3, 0);
+    analogWrite(A2_4, 0);
+    myFile.print(motor.read()); 
 }
 
 /*algorithm()
@@ -412,6 +418,11 @@ void algorithm(){
   yaw = 0.0;
   elapsedMicros algorithm_time; //////////change back to elasped micros   //reset algorithm_time to find time passed and for integration
 
+  #if (defined REAL && defined ASSY_REHERSAL)
+    yaw_req = 90.0;
+  #endif
+
+
   while (!abs((error = yaw_req - yaw)<= yaw_control_cutoff) && (algorithm_time < control_timeout)) {
     last_time = algorithm_time; //t_n-1
     cord_length = error*k_p;//P controller = SetPoint - actual yaw
@@ -441,19 +452,16 @@ void algorithm(){
   digitalWrite(A1_3, LOW);
   digitalWrite(A2_4, LOW);
 
-
-  //glide
-  last_glide = 0.0;//time now ////////use unix time or Micros()?
-
-
   myFile.close();
+
+  last_glide = millis();//time now
 }
 
 bool high_G(){
 
-  #ifdef REAL
+  #if (defined REAL && !defined ASSY_REHERSAL) 
     mpu.getAccelerometerSensor()->getEvent(&a); //get only accleraiontion
-    return (a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 886.12; //Check if total accelration > 3g ((3*9.81)^2 = 886.12)
+    return (a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 225;//886.12; //Check if total accelration > 3g ((3*9.81)^2 = 886.12)
   #endif
 
   #ifdef DEBUG_SERIAL_INPUT
@@ -469,17 +477,19 @@ bool high_G(){
     return status > 3.0 ;
   #endif
   
-  #if(!defined DEBUG_SERIAL_INPUT && !defined REAL)
+  #ifdef ASSY_REHERSAL
     return 1;
   #endif
 
-  }
+}
 
 
 void setup() {
   Serial.begin(115200);
   while(!Serial);
   Serial.println("Set up");
+
+  pinMode(PI_PIN, OUTPUT); //setting the I/O connected to PI be OUTPUT (pullup resistor should be setup on PI software)
 
   //pin setup for controlling motor
   pinMode(EN, OUTPUT);
@@ -489,7 +499,7 @@ void setup() {
   digitalWrite(A1_3, LOW);
   digitalWrite(A2_4, LOW);
 
-  motor.write(0);
+  motor.write(0); //Zero Encoder 
   set_SD();
   set_bmp();
   set_mpu();
@@ -508,13 +518,17 @@ void setup() {
   }
   Serial.print("launched");
   
+  #ifdef ASSY_REHERSAL
+    deployed = true;
+  #endif
+
   while(launched && !deployed){ // while rocket is launched but magpi is not deployed
     get_data();
     
     if(alt_bmp > max_alt){
       max_alt = alt_bmp;
 
-    } else if((max_alt - alt_bmp) > 100.0){ //if descent from apogee more than 100m, set deployed true
+    } else if((max_alt - alt_bmp) > 1.0){ //if descent from apogee more than 100m, set deployed true
       deployed = true;
 
     }
@@ -532,18 +546,23 @@ void setup() {
 }
 
 void loop(){
-  #ifdef REAL
+  #if (defined REAL && !defined ASSY_REHERSAL)
+  
   get_data();
 
-  if ((current_time - last_glide) > glide_interval && alt_bmp < alt_cutoff){
-    algorithm(); ///////algorithm should have it's own get_data and sve_data (or just call them)
+  void_timestamp = millis();
+  if ((current_time - last_glide) > glide_interval && alt_bmp > alt_cutoff){ //the logic seems not working to well, check if the problem is current time
+    algorithm();
   }
   
   save_data();
+
   #endif
 
-  #ifdef DEBUG_SERIAL_INPUT
+  #ifdef ASSY_REHERSAL
   get_data();
+  void_timestamp = millis();
+  algorithm();
   save_data();
   #endif
 }
