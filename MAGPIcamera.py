@@ -6,7 +6,7 @@ import picamera
 import string
 import serial 
 import time
-import cv2
+#import cv2
 
 
 import RPi.GPIO as GPIO
