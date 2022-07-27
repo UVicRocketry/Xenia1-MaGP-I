@@ -13,6 +13,7 @@ import RPi.GPIO as GPIO
 
 
 from time import sleep
+from cv2 import cv2
 from picamera import PiCamera
 from smbus import SMBus #to work with 12C communication
 
