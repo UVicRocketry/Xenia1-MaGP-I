@@ -6,7 +6,7 @@ import picamera
 import string
 import serial 
 import time
-#import cv2
+import cv2
 
 
 import RPi.GPIO as GPIO
@@ -33,16 +33,22 @@ def start_picam():
         pi_camera.start_recording('/home/pi/Desktop/pi_cam_video.h264')   
         
 def start_usbcam():
-        usb_camera = VideoStream(src=0).start() #USB camera 
+ 
+ cam = cv2.VideoCapture(0)
+
+ while True:
+	 ret, image = cam.read()
+	 cv2.imshow('Imagetest',image)
+	 k = cv2.waitKey(1)
+	 if k != -1:
+		break
+ cv2.imwrite('/home/pi/testimage.jpg', image)
+ cam.release()
+ cv2.destroyAllWindows()
+ 
+ 
         
-        usb_camera.start_preview()  #to see on laptop
-        usb_camera.capture("testUSBCam.jpg")         
-        
-        usb_camera.start_recording('/home/pi/Desktop/usb_cam_video.h264')
-        
-        
-       
-    
+     
 if (GPIO.input==GPIO.HIGH): #GPIO pin set to trigger camera once received high voltage 
         
         
