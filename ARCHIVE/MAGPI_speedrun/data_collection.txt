@@ -1,0 +1,53 @@
+[X] not added
+
+Data Collection
+#############    State == !launched && !deployed   ##############
+No data will be collected
+
+#############    State == launched && !deployed   ##############
+
+time
+micros() //timestamp timing will be just before getting data
+
+GPS 
+    gps_time //two choices 1) use unix time by calling myGPS.time.value() 2) use myGps.time object and calculate
+    lat //myGPS.location.lat();
+    lon //myGPS.location.lon();
+    heading //myGPS.course.deg();
+    speed //myGPS.speed.mps(); speed over ground inmeter per sec
+    alt //myGPS.gps_alt = myGPS.altitude.meters();
+[x] satellites //gps.satellites.value();
+
+
+MPU6050 (access via the sensors_event_t struct a,w,temp)
+acceleration 
+    a.acceleration.x
+    a.acceleration.y
+    a.acceleration.z 
+
+gyro 
+    w.gyro.x
+    w.gyro.y
+    w.gyro.z
+
+BMP390 (accee via bmp object class)
+    bmp.temperature
+    bmp.pressure
+    bmp.readAltitude(SEALEVELPRESSURE_HPA)) //calculated by equation, checking is required
+
+
+#############    State == launched && deployed   ##############
+all data above will be collected
+
+# Algorthim() #
+    target_heading
+    yaw_req !!!!can cal afterwards
+
+    # P control loop() #
+        error //yaw_req - yaw
+            # motor loop() #
+                turn_no //this will be a number of steps
+
+            delta_time
+            yaw //accumulated should find different versions
+
