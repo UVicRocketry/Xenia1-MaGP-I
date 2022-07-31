@@ -16,10 +16,13 @@ from picamera import PiCamera
 #start pi camera
 def start_picam():
     pi_camera = picamera.PiCamera()
-    pi_camera.resolution = (640,480)
+    pi_camera.resolution = (1024,720)
     pi_camera.start_preview()
-    pi_camera.start_recording('recorded.h264')
-    pi_camera.wait_recording(2)
+    picam_filename = str(time.time()) + ".h264"
+    pi_camera.start_recording(picam_filename)
+    while GPIO.input == GPIO.HIGH:
+        pi_camera.wait_recording(5) #if still deployed record 5 more seconds
+    pass
     pi_camera.stop_recording()
     pi_camera.stop_preview()
 
@@ -43,17 +46,16 @@ def start_usbcam():
     cap.release()
     cv2.destroyAllWindows()
 
+mode = GPIO.getmode()
+GPIO.setmode(mode)
+GPIO.setup(8, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) #NC low (0V)
+
+while GPIO.input == GPIO.LOW:
+    pass
 
 start_picam()
-start_usbcam()
-"""
-if (GPIO.input==GPIO.HIGH): #GPIO pin set to trigger camera once received high voltage 
+#start_usbcam()
 
-    try:
-        while True:
-            start_picam()
-            start_usbcam()
-    finally:
-            camera1.stop_recording()
-            camera2.stop_recording()
-"""
+#timer
+
+#end record and store video
