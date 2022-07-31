@@ -4,58 +4,56 @@ import io
 import random
 import picamera
 import string
-import serial 
 import time
 import cv2
 
-
 import RPi.GPIO as GPIO
 
-
 from time import sleep
-from cv2 import cv2
+
 from picamera import PiCamera
-from smbus import SMBus #to work with 12C communication
-
-
-
 
 #start pi camera
 def start_picam():
-        
-        pi_camera = VideoStream(usePiCamera=True).start() #Pi Camera
-        
-        pi_camera.start_preview()  #to see on laptop
-        pi_camera.capture("testPiCam.jpg") #to be commented out
-        #camera.vflip=True #in case it is upside down
-        time.sleep(5) #before starting recording
-        
-        pi_camera.start_recording('/home/pi/Desktop/pi_cam_video.h264')   
-        
-def start_usbcam():
- 
- cam = cv2.VideoCapture(0)
+    pi_camera = picamera.PiCamera()
+    pi_camera.resolution = (640,480)
+    pi_camera.start_preview()
+    pi_camera.start_recording('recorded.h264')
+    pi_camera.wait_recording(2)
+    pi_camera.stop_recording()
+    pi_camera.stop_preview()
 
- while True:
-	 ret, image = cam.read()
-	 cv2.imshow('Imagetest',image)
-	 k = cv2.waitKey(1)
-	 if k != -1:
-		break
- cv2.imwrite('/home/pi/testimage.jpg', image)
- cam.release()
- cv2.destroyAllWindows()
- 
- 
-        
-     
+
+
+def start_usbcam():
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("cannot open cam")
+        exit()
+    while True:
+        ret, frame = cap.read()
+
+        if not ret:
+            print("cannot recieve frame")
+            break
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        cv2.imshow('frame', gray)
+        if cv2.waitKey(1) == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+start_picam()
+start_usbcam()
+"""
 if (GPIO.input==GPIO.HIGH): #GPIO pin set to trigger camera once received high voltage 
-        
-        
-        try:
-                while True:
-                        start_picam()
-                        start_usbcam()
-        finally:
-                camera1.stop_recording()       
-                camera2.stop_recording()            
+
+    try:
+        while True:
+            start_picam()
+            start_usbcam()
+    finally:
+            camera1.stop_recording()
+            camera2.stop_recording()
+"""
