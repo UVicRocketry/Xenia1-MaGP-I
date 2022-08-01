@@ -526,7 +526,7 @@ void setup() {
   while(!launched){ //while rocket is not launch, stay in the loop
     void_timestamp = millis();
     while(high_G() && !launched){  
-      launched = ((millis()- void_timestamp) > 200)? true : false;
+      launched = ((millis()- void_timestamp) > 500)? true : false; // if high G for 0.5s, set state as launch
     }
   }
   myFile = SD.open(filename, FILE_WRITE);
@@ -543,7 +543,7 @@ void setup() {
     if(alt_bmp > max_alt){
       max_alt = alt_bmp;
 
-    } else if((max_alt - alt_bmp) > 1.0){ //if descent from apogee more than 100m, set deployed true
+    } else if((max_alt - alt_bmp) > 100.0){ //if descent from apogee more than 100m, set deployed true
       deployed = true;
 
     }
