@@ -30,15 +30,6 @@ X  L   Z (High Impedance)
 get data -> calculate -> run control algorithm -> store data 
 */
 
-/*Gordon to do
-- Start up: Use serial port???
-- complete logic then add time_out routines [DONE]
-- Algorthim data writing: Encoder, P controller output, every step
-- check sensor sampling rate
-- set sensor range
-
-*/
-
 /* Time Routine
 the data file will look like (subject to change)
 
@@ -66,18 +57,20 @@ GPS time, time since_last_GPS
 #include "cmath"
 #include "SimpleKalmanFilter.h"
 
+#include <cstdlib>
+
 //states
 bool launched = false;
 bool deployed = false;
 bool test_status = false;
 float max_alt = 0.0;
-#define PI_PIN 8
+#define PI_PIN 1
 
 
 //variables used for GPS
 double lat ,lon, lat_old, lon_old, speed, gps_alt, heading;
 double elasped_time;
-static const double TARGET_LAT = 12.123456, TARGET_LON = 12.123456; ////////////change GPS Location
+static const double TARGET_LAT = 46.085087, TARGET_LON = -80.401635; ////////////change GPS Location
 unsigned long current_time, gps_time;
 bool gps_updated = false;
 
@@ -107,7 +100,7 @@ const double rad_to_degree = 180.0/PI;
 double cord_length = 0.0;
 #define max_cord_lenth 50.0
 
-SimpleKalmanFilter kalmanFilter(1,1,0.01); ///////////change constants   //SimpleKalmanFilter(e_mea, e_est, q); 
+SimpleKalmanFilter kalmanFilter(2,2,0.01); ///////////change constants   //SimpleKalmanFilter(e_mea, e_est, q); 
 
 #define filename "MAGPI.txt"
 #define delim ","
@@ -125,7 +118,7 @@ File myFile;
 TinyGPSPlus myGPS;
 
 #define REAL
-#define ASSY_REHERSAL
+//#define ASSY_REHERSAL
 //#define DEBUG_SERIAL_INPUT
 
 #ifdef DEBUG_SERIAL_INPUT
@@ -271,28 +264,31 @@ void save_data(){
   //Use Serial for DEBUG [add pause function]
   #ifdef REAL
   myFile = SD.open(filename, FILE_WRITE);
-  myFile.print("N"); myFile.print(current_time,8); myFile.print(delim);
+  myFile.println("*** N ***"); myFile.print(current_time,8); myFile.print(delim);
 
   //mpu data sensors readings
+  myFile.print("a");
   myFile.print(a.acceleration.x,8); myFile.print(delim);
   myFile.print(a.acceleration.y,8); myFile.print(delim);
   myFile.print(a.acceleration.z,8); myFile.print(delim);
+  myFile.print("w");
   myFile.print(w.gyro.x,8); myFile.print(delim);
   myFile.print(w.gyro.y,8); myFile.print(delim);
   myFile.print(w.gyro.z,8); myFile.print(delim);
 
   //bmp
+  myFile.print("bmp");
   myFile.print(bmp.temperature,8); myFile.print(delim);
   myFile.print(bmp.pressure,8); myFile.print(delim);
   myFile.print(alt_bmp,8); myFile.print(delim);
 
   //GPS
+  myFile.print("GPS");
   myFile.print(lat,8); myFile.print(delim);
   myFile.print(lon,8); myFile.print(delim);
   myFile.print(gps_alt,8); myFile.print(delim);
   myFile.print(heading,8); myFile.print(delim);
-  myFile.print(speed,8); myFile.print(delim);
-  myFile.print("\n"); 
+  myFile.println(speed,8);  
 
   myFile.close(); 
   #endif
@@ -336,18 +332,21 @@ double principal_angle(double angle){
 // Rotate the motor so the absolute extension or retraction of the
 // the shroud line is length
 void rotate_motor(float length){
-  myFile.print("L"); myFile.print(length); myFile.print(delim);
-   
-
+  myFile.println("***Rotate Motor***"); myFile.print("L"); myFile.print(length); myFile.print(delim);
+  
   if(length > max_cord_lenth){
     length = max_cord_lenth;
+  } else if (length < -max_cord_lenth){
+    length = -max_cord_lenth;
   }
+
+  length = -length;
   // pos is the absolute position in terms of the encoder
   int pos = round(turn_per_length * length);
   //int pos = length;
   int error = pos - motor.read();
   int init_error = error;
-  myFile.print("Mp0"); myFile.print(motor.read()); myFile.print(delim);
+  myFile.print("Mpi"); myFile.print(motor.read()); myFile.print(delim); myFile.print("e_");
 
   //Serial.print("E_i"); Serial.println(motor.read());
 
@@ -387,13 +386,14 @@ void rotate_motor(float length){
       analogWrite(A2_4, pwm);
 
     if((millis() - time_started) > timeout){
-      myFile.print("timeout");
+      myFile.print("timeout"); myFile.println("");
       break;
     }
   }
     digitalWrite(EN, LOW); //High impendence mode
     analogWrite(A1_3, 0);
     analogWrite(A2_4, 0);
+    myFile.println("");
 }
 
 /*algorithm()
@@ -413,21 +413,24 @@ void algorithm(){
   //int turn_no = 0;
   int turn_reset = 0;
   double yaw_req = 0.0;
+
+  #if (defined REAL && !defined ASSY_REHERSAL)
   target_heading = myGPS.courseTo(lat, lon, TARGET_LAT, TARGET_LON);
   yaw_req = target_heading - heading;
   yaw_req = principal_angle(yaw_req);
+  #endif
+
+  #ifdef ASSY_REHERSAL
+  yaw_req = principal_angle(rand());
+  #endif
   myFile.print("Ci"); //Control Even initial
   myFile.print(current_time); myFile.print(",th");
-  myFile.print(target_heading);
+  myFile.println(target_heading);
   
 // get yaw difference -> P controller
 // P controller needs -> current yaw               /////need to set the map of the pulley////////// 
 
   yaw = 0.0;
-
-  #if (defined REAL && defined ASSY_REHERSAL)
-    yaw_req = 90.0;
-  #endif
 
   elapsedMicros algorithm_time; //////////change back to elasped micros   //reset algorithm_time to find time passed and for integration
 
@@ -463,10 +466,6 @@ void algorithm(){
   myFile.println("Pf");
   rotate_motor(0); //rest motor position to 0
   rotate_motor(0); //call twice to ensure 0
-  
-  digitalWrite(EN, LOW); //disable motor when glide
-  digitalWrite(A1_3, LOW);
-  digitalWrite(A2_4, LOW);
 
   myFile.close();
 }
@@ -475,7 +474,7 @@ bool high_G(){
 
   #if (defined REAL && !defined ASSY_REHERSAL) 
     mpu.getAccelerometerSensor()->getEvent(&a); //get only accleraiontion
-    return (a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 400;//Check if total accelration > 2g ((2*9.81)^2 ~ 400m/s^2)
+    return (a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 850.0;//Check if total accelration > 2g ((2*9.81)^2 ~ 400m/s^2)
   #endif
 
   #ifdef DEBUG_SERIAL_INPUT
@@ -518,11 +517,17 @@ void setup() {
   set_mpu();
   set_GPS();
 
+/*
   get_data();
   save_data();
+*/
   //add one set the motor to high impendace mode to prevent spinning
   //add set sensor to sleep OR not active
   
+  #ifdef ASSY_REHERSAL
+    launched = true;
+  #endif
+
   while(!launched){ //while rocket is not launch, stay in the loop
     void_timestamp = millis();
     while(high_G() && !launched){  
@@ -536,8 +541,11 @@ void setup() {
   #ifdef ASSY_REHERSAL
     deployed = true;
   #endif
-
+  void_timestamp = millis();
   while(launched && !deployed){ // while rocket is launched but magpi is not deployed
+    if ((millis()-void_timestamp)>60000){
+        break;
+    }
     get_data();
     
     if(alt_bmp > max_alt){
@@ -551,7 +559,7 @@ void setup() {
     
   }
   myFile = SD.open(filename, FILE_WRITE);
-  myFile.print("DEPLOYED AT"); myFile.print(millis());
+  myFile.print("DEPLOYED AT"); myFile.println(millis());
   myFile.close(); 
 
   digitalWrite(PI_PIN, HIGH);  //output HIGH logic to the PI_PIN
@@ -568,7 +576,7 @@ void loop(){
   
   get_data();
 
-  if (((millis() - last_glide) > glide_interval) && (alt_bmp > alt_cutoff) && gps_updated){ //the logic seems not working to well, check if the problem is current time
+  if (((millis() - last_glide) > glide_interval) && (alt_bmp > alt_cutoff)){ //the logic seems not working to well, check if the problem is current time
     algorithm();
     last_glide = millis();//time now
   }
