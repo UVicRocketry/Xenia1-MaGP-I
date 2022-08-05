@@ -77,20 +77,20 @@ bool gps_updated = false;
 double filtered_alt;
 
 //motor
-#define EN 5 //replace pin number
+#define EN 39 //replace pin number
 #define A1_3 3 //L293d channel 1A 3A 
 #define A2_4 4 //L293d channel 2A 4A 
-Encoder motor(31, 32); // Set up Encoder object and declare two interrupt pins used
+Encoder motor(28, 29); // Set up Encoder object and declare two interrupt pins used
  
 //algorithm
 double target_heading = 0.0;
-double last_glide = 0.0;
-const double glide_interval = 7.0; //5 sec glide time ////////check if I used micros or mills
+unsigned int last_glide = 0;
+const double glide_interval = 10000.0; //10 sec glide time ////////check if I used micros or mills
 double yaw = 0.0;
 const double yaw_control_cutoff = 5.0; //5degree cut off (for the error)
 unsigned int void_timestamp = 0;
 const double turn_per_length = 4951.0/80.55; //turns/mm
-const unsigned int control_timeout = 2000; // max 2 sec turn control ////////check if I used micros or mills
+const unsigned int control_timeout = 3000; // max 3 sec turn control ////////check if I used micros or mills
 const double k_p = 50.0/180.0; // max length/180 degree 
 double error = 0.0;
 unsigned int delta_time = 0;
@@ -211,7 +211,7 @@ void get_data(){
   
   bool reset = false;
   gps_updated = false;
-  unsigned long timestamp_GPS_package = 0;
+  unsigned int timestamp_GPS_package = 0;
   
   elapsedMicros since_last_GPS; //must be declared outside loop for access
   while(Serial8.available()>0){ // check for gps data
@@ -411,7 +411,7 @@ void algorithm(){
   myFile = SD.open(filename, FILE_WRITE);
   myFile.println("***C Event***");
   //int turn_no = 0;
-  int turn_reset = 0;
+  //int turn_reset = 0;
   double yaw_req = 0.0;
 
   #if (defined REAL && !defined ASSY_REHERSAL)
@@ -474,7 +474,7 @@ bool high_G(){
 
   #if (defined REAL && !defined ASSY_REHERSAL) 
     mpu.getAccelerometerSensor()->getEvent(&a); //get only accleraiontion
-    return (a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 850.0;//Check if total accelration > 2g ((2*9.81)^2 ~ 400m/s^2)
+    return (a.acceleration.x *a.acceleration.x + a.acceleration.y *a.acceleration.y + a.acceleration.z *a.acceleration.z) >= 384.94;//Check if total accelration > 2g ((2*9.81)^2 ~ 400m/s^2)
   #endif
 
   #ifdef DEBUG_SERIAL_INPUT
@@ -502,6 +502,7 @@ void setup() {
   Serial.println("Set up");
 
   pinMode(PI_PIN, OUTPUT); //setting the I/O connected to PI be OUTPUT (pullup resistor should be setup on PI software)
+  digitalWrite(PI_PIN, LOW);
 
   //pin setup for controlling motor
   pinMode(EN, OUTPUT);
@@ -576,7 +577,7 @@ void loop(){
   
   get_data();
 
-  if (((millis() - last_glide) > glide_interval) && (alt_bmp > alt_cutoff)){ //the logic seems not working to well, check if the problem is current time
+  if (((millis() - last_glide) > glide_interval) && (alt_bmp > alt_cutoff)){ 
     algorithm();
     last_glide = millis();//time now
   }

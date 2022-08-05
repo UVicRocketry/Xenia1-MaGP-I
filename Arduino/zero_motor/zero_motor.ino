@@ -2,11 +2,11 @@
 #include "Encoder.h"
 
 //motor
-#define EN 5 //replace pin number
+#define EN 39 //replace pin number
 #define A1_3 3 //L293d channel 1A 3A 
 #define A2_4 4 //
 //int motor_position = -999; // to be zero by the the hall effect sensor  
-Encoder motor(31, 32); 
+Encoder motor(28, 29); 
 
 const double turn_per_length = 4951/80.55;
 
